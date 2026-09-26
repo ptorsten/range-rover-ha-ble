@@ -55,7 +55,7 @@ When your Range Rover pulls into the garage, this integration automatically conn
 
 1. Open **HACS** in Home Assistant.
 2. Go to **Integrations** → three-dot menu (⋮) → **Custom repositories**.
-3. Paste: `https://github.com/totte/range-rover-ha-ble`, category **Integration**. Click **Add**.
+3. Paste: `https://github.com/ptorsten/range-rover-ha-ble`, category **Integration**. Click **Add**.
 4. Find **Range Rover BLE** in the HACS list and click **Download**.
 5. Restart Home Assistant.
 6. Go to **Settings → Devices & Services → Add Integration**, search for **Range Rover BLE**.

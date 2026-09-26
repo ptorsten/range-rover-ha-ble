@@ -1,9 +1,9 @@
 {
-  "codeowners": ["@totte"],
+  "codeowners": ["@ptorsten"],
   "config_flow": true,
   "dependencies": ["bluetooth_adapters"],
-  "documentation": "https://github.com/totte/range-rover-ha-ble",
-  "issue_tracker": "https://github.com/totte/range-rover-ha-ble/issues",
+  "documentation": "https://github.com/ptorsten/range-rover-ha-ble",
+  "issue_tracker": "https://github.com/ptorsten/range-rover-ha-ble/issues",
   "domain": "range_rover_ble",
   "iot_class": "local_polling",
   "name": "Range Rover BLE",

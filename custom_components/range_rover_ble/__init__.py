@@ -1,7 +1,7 @@
 """Custom integration to read Range Rover P550e PHEV data via BLE OBD-II.
 
 For more details about this integration, please refer to
-https://github.com/totte/range-rover-ha-ble
+https://github.com/ptorsten/range-rover-ha-ble
 """
 
 import logging

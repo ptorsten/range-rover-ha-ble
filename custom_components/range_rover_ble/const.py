@@ -7,7 +7,7 @@ DOMAIN = "range_rover_ble"
 DOMAIN_DATA = f"{DOMAIN}_data"
 VERSION = "0.1.0"
 
-ISSUE_URL = "https://github.com/totte/range-rover-ha-ble/issues"
+ISSUE_URL = "https://github.com/ptorsten/range-rover-ha-ble/issues"
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR]
 
