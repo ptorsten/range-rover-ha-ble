@@ -430,3 +430,158 @@ class RangeRoverBleClient:
             return result
 
         return result
+
+    async def async_run_discovery(self, options: dict | None = None) -> dict[str, Any]:
+        """Run a full PID discovery scan across all ECUs.
+
+        Probes a wide set of DIDs on BECM, BCCM, PCM, and standard OBD
+        broadcast. Returns structured results for display.
+        """
+        options = options or {}
+        read_uuid = options.get("characteristic_uuid_read", self._read_uuid)
+        write_uuid = options.get("characteristic_uuid_write", self._write_uuid)
+
+        discovery_pids = [
+            # Standard OBD
+            ("7DF", "0100", "Supported PIDs [01-20]"),
+            ("7DF", "015B", "Hybrid battery remaining life (std)"),
+            ("7DF", "0142", "Control module voltage (12V)"),
+            ("7DF", "0146", "Ambient air temperature"),
+            ("7DF", "010D", "Vehicle speed"),
+            ("7DF", "010C", "Engine RPM"),
+            # BECM
+            ("7E4", "224910", "BECM: SOC average"),
+            ("7E4", "224911", "BECM: SOC minimum cell"),
+            ("7E4", "224914", "BECM: SOC maximum cell"),
+            ("7E4", "22490F", "BECM: HV battery voltage"),
+            ("7E4", "22490C", "BECM: HV battery current"),
+            ("7E4", "224905", "BECM: Battery temperature"),
+            ("7E4", "224918", "BECM: SOH average"),
+            ("7E4", "224903", "BECM: Cell voltage max"),
+            ("7E4", "224904", "BECM: Cell voltage min"),
+            ("7E4", "22491B", "BECM: Coolant outlet temp"),
+            ("7E4", "22491C", "BECM: Coolant inlet temp"),
+            # BCCM
+            ("7E5", "224910", "BCCM: SOC"),
+            ("7E5", "22490F", "BCCM: HV voltage"),
+            ("7E5", "22490C", "BCCM: HV current"),
+            ("7E5", "224905", "BCCM: Battery temp"),
+            ("7E5", "224918", "BCCM: SOH"),
+            # Alt DID ranges (MLA-Flex)
+            ("7E4", "22DD04", "BECM: SOC (alt DD04)"),
+            ("7E4", "22DD05", "BECM: HV voltage (alt DD05)"),
+            ("7E4", "22DD06", "BECM: HV current (alt DD06)"),
+            ("7E4", "22DD07", "BECM: Battery temp (alt DD07)"),
+            ("7E4", "22DD0A", "BECM: Charging status (alt DD0A)"),
+            ("7E4", "22DD0B", "BECM: EV range (alt DD0B)"),
+            ("7E5", "22DD04", "BCCM: SOC (alt DD04)"),
+            ("7E5", "22DD0A", "BCCM: Charging status (alt DD0A)"),
+            # PCM
+            ("7E0", "224910", "PCM: SOC"),
+            ("7E0", "2142", "PCM: Control module voltage"),
+        ]
+
+        responded: list[dict] = []
+        no_data: list[str] = []
+        errors: list[dict] = []
+
+        try:
+            async with BleakClient(self._ble_device) as client:
+                await client.start_notify(read_uuid, self._notification_handler)
+
+                for init_cmd in ELM_INIT_COMMANDS:
+                    await self._send_command(client, init_cmd, timeout=3.0)
+
+                # Wakeup sequence
+                for wake_header in WAKEUP_HEADERS:
+                    await self._send_command(
+                        client, f"ATSH{wake_header}\r".encode(), timeout=2.0
+                    )
+                    await self._send_command(client, b"3E00\r", timeout=3.0)
+                    await self._send_command(client, b"1003\r", timeout=3.0)
+
+                # Probe all PIDs
+                last_header = None
+                pid_count = 0
+                for header, command, label in discovery_pids:
+                    if header != last_header:
+                        await self._send_command(
+                            client, f"ATSH{header}\r".encode(), timeout=2.0
+                        )
+                        last_header = header
+
+                    raw = await self._send_command(
+                        client, f"{command}\r".encode(), timeout=5.0
+                    )
+                    raw_clean = (raw or "").upper().replace("\r", " ").strip()
+
+                    if not raw or "TIMEOUT" in raw:
+                        no_data.append(label)
+                    elif "NO DATA" in raw_clean:
+                        no_data.append(label)
+                    elif "ERROR" in raw_clean or "?" in raw_clean:
+                        errors.append({"label": label, "raw": raw_clean})
+                    else:
+                        nrc = _classify_nrc(raw_clean)
+                        if nrc:
+                            errors.append({
+                                "label": label, "raw": raw_clean, "nrc": nrc,
+                            })
+                        else:
+                            responded.append({
+                                "label": label,
+                                "command": command,
+                                "header": header,
+                                "raw": raw_clean,
+                            })
+
+                    pid_count += 1
+                    if pid_count % 8 == 0:
+                        saved = last_header
+                        for wh in WAKEUP_HEADERS:
+                            await self._send_command(
+                                client, f"ATSH{wh}\r".encode(), timeout=1.0
+                            )
+                            await self._send_command(
+                                client, b"3E00\r", timeout=2.0
+                            )
+                        if saved:
+                            await self._send_command(
+                                client, f"ATSH{saved}\r".encode(), timeout=1.0
+                            )
+                            last_header = saved
+
+                await client.stop_notify(read_uuid)
+
+        except Exception as err:
+            _LOGGER.error("Discovery scan error: %s", err)
+            errors.append({"label": "CONNECTION", "raw": str(err)})
+
+        return {
+            "responded": responded,
+            "no_data": no_data,
+            "errors": errors,
+        }
+
+
+def _classify_nrc(raw: str) -> str | None:
+    """If the response contains a UDS Negative Response (7F), decode the NRC."""
+    try:
+        data = bytes.fromhex(raw.replace(" ", ""))
+    except ValueError:
+        return None
+    nrc_names = {
+        0x11: "serviceNotSupported",
+        0x12: "subFunctionNotSupported",
+        0x13: "incorrectMessageLength",
+        0x22: "conditionsNotCorrect",
+        0x31: "requestOutOfRange",
+        0x33: "securityAccessDenied",
+        0x7E: "subFunctionNotSupportedInActiveSession",
+        0x7F: "serviceNotSupportedInActiveSession",
+    }
+    for i in range(len(data) - 2):
+        if data[i] == 0x7F:
+            nrc = data[i + 2]
+            return nrc_names.get(nrc, f"0x{nrc:02X}")
+    return None

@@ -289,27 +289,39 @@ class ELM327BLE:
 async def scan_adapters() -> list:
     """Scan for BLE devices that look like OBD adapters."""
     print("\nScanning for BLE devices (10 seconds)...\n")
-    devices = await BleakScanner.discover(timeout=10.0)
+
+    discovered: dict[str, tuple] = {}
+
+    def _detection_callback(device, advertisement_data):
+        rssi = advertisement_data.rssi if advertisement_data else None
+        discovered[device.address] = (device, rssi)
+
+    scanner = BleakScanner(detection_callback=_detection_callback)
+    await scanner.start()
+    await asyncio.sleep(10.0)
+    await scanner.stop()
 
     obd_keywords = {"obd", "elm", "vgate", "vlink", "icar", "obdlink", "lelink", "car"}
     candidates = []
     all_devices = []
 
-    for d in devices:
-        name = (d.name or "").strip()
-        all_devices.append((d.address, name, d.rssi))
+    for addr, (device, rssi) in discovered.items():
+        name = (device.name or "").strip()
+        all_devices.append((addr, name, rssi or -999))
         if any(kw in name.lower() for kw in obd_keywords):
-            candidates.append(d)
+            candidates.append((device, rssi))
 
     if candidates:
         print(f"Found {len(candidates)} likely OBD adapter(s):\n")
-        for i, d in enumerate(candidates):
-            print(f"  [{i}] {d.name}  ({d.address})  RSSI: {d.rssi}")
+        for i, (d, rssi) in enumerate(candidates):
+            rssi_str = f"RSSI: {rssi}" if rssi else ""
+            print(f"  [{i}] {d.name}  ({d.address})  {rssi_str}")
     else:
         print("No obvious OBD adapters found. All BLE devices:\n")
         for addr, name, rssi in sorted(all_devices, key=lambda x: x[2], reverse=True):
             label = name if name else "(no name)"
-            print(f"  {label:30s}  {addr}  RSSI: {rssi}")
+            rssi_str = f"RSSI: {rssi}" if rssi != -999 else ""
+            print(f"  {label:30s}  {addr}  {rssi_str}")
         print("\nTip: make sure the OBD adapter is plugged in.")
 
     return candidates
@@ -539,7 +551,8 @@ async def main():
             except (ValueError, EOFError):
                 return
 
-        await discover(candidates[choice].address)
+        device, _rssi = candidates[choice]
+        await discover(device.address)
 
 
 if __name__ == "__main__":
