@@ -1,0 +1,23 @@
+{
+  "codeowners": ["@totte"],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/totte/range-rover-ha-ble",
+  "issue_tracker": "https://github.com/totte/range-rover-ha-ble/issues",
+  "domain": "range_rover_ble",
+  "iot_class": "local_polling",
+  "name": "Range Rover BLE",
+  "requirements": ["bleak>=0.21.0", "bleak-retry-connector>=3.0.0"],
+  "version": "0.1.0",
+  "bluetooth": [
+    {
+      "service_uuid": "0000ffe0-0000-1000-8000-00805f9b34fb"
+    },
+    {
+      "service_uuid": "0000fff0-0000-1000-8000-00805f9b34fb"
+    },
+    {
+      "service_uuid": "e7810a71-73ae-499d-8c15-faa9aef0c3f2"
+    }
+  ]
+}
