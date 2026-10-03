@@ -42,6 +42,71 @@ ELM_INIT_COMMANDS = [
 # This wakes sleeping ECUs and keeps them awake for the duration of the poll.
 WAKEUP_HEADERS = ["7E4", "7E5"]
 
+# Known BLE OBD adapter GATT layouts. If the configured UUIDs are not present
+# on the connected device we fall back to the first of these that is.
+UUID_CANDIDATES: list[dict[str, str]] = [
+    {
+        "name": "Generic ELM327 (FFE0/FFE1)",
+        "service": "0000ffe0-0000-1000-8000-00805f9b34fb",
+        "notify": "0000ffe1-0000-1000-8000-00805f9b34fb",
+        "write": "0000ffe1-0000-1000-8000-00805f9b34fb",
+    },
+    {
+        "name": "OBDLink CX / FFF0 type",
+        "service": "0000fff0-0000-1000-8000-00805f9b34fb",
+        "notify": "0000fff1-0000-1000-8000-00805f9b34fb",
+        "write": "0000fff2-0000-1000-8000-00805f9b34fb",
+    },
+    {
+        "name": "Vgate vLinker / iOS-Vlink type",
+        "service": "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
+        "notify": "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
+        "write": "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
+    },
+]
+
+
+def _resolve_uuids(client: BleakClient, read_uuid: str, write_uuid: str) -> tuple[str, str]:
+    """Return (notify_uuid, write_uuid) that actually exist on the device.
+
+    Prefer the configured pair when the device has them; otherwise pick the
+    first known adapter layout whose notify characteristic is present; as a
+    last resort pick any characteristic that can notify and one that can be
+    written to.
+    """
+    chars = {
+        c.uuid.lower(): c
+        for service in client.services
+        for c in service.characteristics
+    }
+    if not chars:
+        return read_uuid, write_uuid
+
+    def _ok(uuid: str, prop: str) -> bool:
+        c = chars.get(uuid.lower())
+        return c is not None and prop in c.properties
+
+    if _ok(read_uuid, "notify") or _ok(read_uuid, "indicate"):
+        if write_uuid.lower() in chars:
+            return read_uuid, write_uuid
+
+    for cand in UUID_CANDIDATES:
+        if (_ok(cand["notify"], "notify") or _ok(cand["notify"], "indicate")) and cand["write"].lower() in chars:
+            _LOGGER.info(
+                "Configured BLE UUIDs not found on adapter; using %s layout", cand["name"]
+            )
+            return cand["notify"], cand["write"]
+
+    notify = next((u for u, c in chars.items() if "notify" in c.properties or "indicate" in c.properties), None)
+    write = next((u for u, c in chars.items() if "write" in c.properties or "write-without-response" in c.properties), None)
+    if notify and write:
+        _LOGGER.warning(
+            "Unknown BLE adapter layout; guessing notify=%s write=%s", notify, write
+        )
+        return notify, write
+    return read_uuid, write_uuid
+
+
 # OBD commands for Range Rover P550e PHEV.
 # Based on JLR BECM (7E4) UDS Mode 22 DIDs from I-Pace community research.
 # Standard OBD PIDs are used where applicable.
@@ -371,6 +436,8 @@ class RangeRoverBleClient:
 
         try:
             async with BleakClient(self._ble_device) as client:
+                read_uuid, write_uuid = _resolve_uuids(client, read_uuid, write_uuid)
+                self._write_uuid = write_uuid
                 await client.start_notify(read_uuid, self._notification_handler)
 
                 # Initialise ELM327
@@ -522,6 +589,8 @@ class RangeRoverBleClient:
 
         try:
             async with BleakClient(self._ble_device) as client:
+                read_uuid, write_uuid = _resolve_uuids(client, read_uuid, write_uuid)
+                self._write_uuid = write_uuid
                 await client.start_notify(read_uuid, self._notification_handler)
 
                 for init_cmd in ELM_INIT_COMMANDS:

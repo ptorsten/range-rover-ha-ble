@@ -10,7 +10,7 @@
       },
       "configure": {
         "title": "Configure BLE UUIDs",
-        "description": "Leave defaults unless your OBD dongle uses non-standard GATT UUIDs.",
+        "description": "Leave the defaults. The integration detects the adapter's GATT layout when it connects (generic FFE0/FFE1, OBDLink FFF0, Vgate vLinker e7810a71) and only uses these values if they exist on the device.",
         "data": {
           "service_uuid": "BLE service UUID",
           "characteristic_uuid_read": "BLE read characteristic UUID",
