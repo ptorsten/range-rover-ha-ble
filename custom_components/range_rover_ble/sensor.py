@@ -101,6 +101,15 @@ SENSOR_TYPES: dict[str, SensorEntityDescription] = {
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    "hv_power_est": SensorEntityDescription(
+        key="hv_power_est",
+        icon="mdi:flash",
+        name="HV battery power (estimated)",
+        native_unit_of_measurement="kW",
+        suggested_display_precision=1,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
     "hv_battery_voltage": SensorEntityDescription(
         key="hv_battery_voltage",
         name="HV battery voltage",

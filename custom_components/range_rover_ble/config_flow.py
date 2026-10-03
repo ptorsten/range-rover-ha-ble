@@ -241,6 +241,9 @@ class RangeRoverBleOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required(
                         "soc_raw_full", default=self.options.get("soc_raw_full", 96.0)
                     ): vol.Coerce(float),
+                    vol.Required(
+                        "pack_kwh", default=self.options.get("pack_kwh", 38.2)
+                    ): vol.Coerce(float),
                     vol.Optional(
                         CONF_SERVICE_UUID,
                         default=self.options.get(CONF_SERVICE_UUID)

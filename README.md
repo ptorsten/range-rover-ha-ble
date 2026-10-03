@@ -183,6 +183,14 @@ window. **Battery charge (displayed, estimated)** maps raw onto that window usin
 at three points: raw 57.3 / 57.4 / 60.2 % showed 49 / 50 / 53 %, and raw ~96 % showed full. Adjust
 the two bounds if your car differs.
 
+### Estimated battery power
+
+The car rejects the HV current DID, so **HV battery power (estimated)** is derived from the raw-SOC
+slope over the last 15 minutes (at least 2 minutes between samples) times the gross pack size
+(`pack_kwh`, default 38.2). Positive while charging, negative while driving. Resolution is limited
+by the 0.01 % SOC steps and the poll interval, so expect ±0.3 kW noise at 60 s polling. On a P550e it
+tracked the wallbox at 6.3 kW and 3.5 kW AC within charger losses.
+
 ## Overriding OBD Commands
 
 Create `config/custom_components/range_rover_ble/overrides.yaml` to customise or add PIDs:

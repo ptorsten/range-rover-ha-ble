@@ -1,7 +1,8 @@
 """Coordinator for Range Rover BLE."""
 
 import asyncio
-from datetime import timedelta
+from collections import deque
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
@@ -32,6 +33,10 @@ DEFAULT_FETCH_TIMEOUT = 90
 # 57.3 / 57.4 / 60.2 % -> shown 49 / 50 / 53 %, and raw ~96 % when full.
 DEFAULT_SOC_RAW_EMPTY = 20.0
 DEFAULT_SOC_RAW_FULL = 96.0
+# Gross pack size used to turn a raw-SOC slope into power. P550e: 38.2 kWh.
+DEFAULT_PACK_KWH = 38.2
+POWER_WINDOW_SECONDS = 15 * 60   # slope is taken over at most this long
+POWER_MIN_SPAN_SECONDS = 120     # and needs at least this much time between samples
 
 # 12V above this means the DC-DC converter is running: car on or charging.
 DCDC_ACTIVE_VOLTS = 13.2
@@ -67,6 +72,22 @@ def determine_mode(data: dict[str, Any], low_12v_threshold: float) -> str:
     return MODE_IDLE if has_can else MODE_ASLEEP
 
 
+def estimate_power_kw(samples, pack_kwh: float) -> float | None:
+    """Battery power from the raw-SOC slope: positive = charging, negative = discharging.
+
+    ``samples`` is an iterable of (unix_seconds, raw_soc_percent), oldest first.
+    """
+    pts = list(samples)
+    if len(pts) < 2:
+        return None
+    (t0, s0), (t1, s1) = pts[0], pts[-1]
+    span = t1 - t0
+    if span < POWER_MIN_SPAN_SECONDS:
+        return None
+    pct_per_hour = (s1 - s0) / (span / 3600.0)
+    return round(pct_per_hour / 100.0 * pack_kwh, 2)
+
+
 def displayed_soc(raw: float | None, raw_empty: float, raw_full: float) -> float | None:
     """Map raw pack SOC onto the dashboard's 0–100 % usable window."""
     if raw is None or raw_full <= raw_empty:
@@ -99,6 +120,7 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._absent_checks = 0
         self._failed_polls = 0
         self.poll_mode: str = MODE_UNKNOWN
+        self._soc_samples: deque[tuple[float, float]] = deque()
         self._force_wake_next = True   # first poll and manual refreshes wake the modules
         self.options = options
 
@@ -164,6 +186,20 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
         )
         if shown is not None:
             new_data["soc_displayed"] = shown
+
+        raw_soc = new_data.get("state_of_charge")
+        if isinstance(raw_soc, (int, float)):
+            now = datetime.now(timezone.utc).timestamp()
+            self._soc_samples.append((now, float(raw_soc)))
+            while self._soc_samples and now - self._soc_samples[0][0] > POWER_WINDOW_SECONDS:
+                self._soc_samples.popleft()
+            power = estimate_power_kw(self._soc_samples, self._pack_kwh)
+            if power is not None:
+                new_data["hv_power_est"] = power
+        else:
+            # No SOC this poll (asleep / passive stop): a later slope across
+            # the gap would be meaningless, so start over.
+            self._soc_samples.clear()
         if self.poll_mode in (MODE_CHARGING, MODE_DRIVING):
             self._set_interval(self._fast_poll_interval, f"Car is {self.poll_mode}")
         elif self.poll_mode == MODE_IDLE:
@@ -215,6 +251,7 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._low_12v_poll = int(options.get("low_12v_poll", DEFAULT_LOW_12V_POLL))
         self._soc_raw_empty = float(options.get("soc_raw_empty", DEFAULT_SOC_RAW_EMPTY))
         self._soc_raw_full = float(options.get("soc_raw_full", DEFAULT_SOC_RAW_FULL))
+        self._pack_kwh = float(options.get("pack_kwh", DEFAULT_PACK_KWH))
         self._cache_values = options.get("cache_values", DEFAULT_CACHE_VALUES)
         self._fetch_timeout = float(
             options.get("fetch_timeout", DEFAULT_FETCH_TIMEOUT)
