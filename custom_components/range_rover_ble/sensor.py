@@ -182,7 +182,7 @@ SENSOR_TYPES: dict[str, SensorEntityDescription] = {
     "ambient_temp": SensorEntityDescription(
         key="ambient_temp",
         icon="mdi:thermometer",
-        name="Ambient temperature",
+        name="Ambient temperature (battery module)",
         native_unit_of_measurement="°C",
         suggested_display_precision=0,
         device_class=SensorDeviceClass.TEMPERATURE,
