@@ -147,10 +147,12 @@ Default ranges are `4900-49FF`, `D900-D9FF`, `DD00-DDFF`; widen with `--range 00
 | `7E4 224910/11/14` | SOC avg/min/max, `(A*256+B)/100` % — matches standard PID `015B` |
 | `7E4 22490F` | HV pack voltage `/100` V (~453 V at 96 % SOC, ~110 cells in series) |
 | `7E4 224903/04` | Cell voltage max/min, mV |
-| `7E4 224918/19/1A` | SOH `/2` %; `4919` reads lowest and `491A` highest, so min/max labels may be swapped |
+| `7E4 224918/19/1A` | SOH avg / min / max, `/2` % |
 | `7E4 22492B/2C` | Battery plate temperatures, `A-40` °C |
 | `7E4 22DD04/05` | Track ambient temperature, not SOC |
+| `7E4 22DD06` | Read `0x00` awake and idle, `0x04` while AC charging. Used as an experimental charge indicator until a DID sweep confirms it |
 | `7E4 22490C`, `224905`, `22491B/1C`, `22DD07/0A/0B` | Rejected: `7F 22 31` requestOutOfRange |
+| Display vs raw SOC | Dashboard showed 49–50 % while raw SOC was 57.3–57.4 % (2026-10-03); the display uses a remapped usable window |
 | Anything on `7E5` (BCCM) or `7E0` (PCM) | Rejected on the DIDs tried so far |
 
 ---

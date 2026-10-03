@@ -225,7 +225,58 @@ COMMANDS: dict[str, dict[str, Any]] = {
         "description": "BCCM: HV battery current",
         "decoder": "hv_current_jlr",
     },
+    # --- Validated on a P550e (2026-09/10) ---
+    "soh_min": {
+        "header": "7E4",
+        "command": "224919",
+        "description": "HV battery state of health (minimum)",
+        "decoder": "soh_jlr",
+    },
+    "soh_max": {
+        "header": "7E4",
+        "command": "22491A",
+        "description": "HV battery state of health (maximum)",
+        "decoder": "soh_jlr",
+    },
+    "battery_plate_temp_1": {
+        "header": "7E4",
+        "command": "22492B",
+        "description": "HV battery plate temperature 1",
+        "decoder": "temp_offset_jlr",
+    },
+    "battery_plate_temp_2": {
+        "header": "7E4",
+        "command": "22492C",
+        "description": "HV battery plate temperature 2",
+        "decoder": "temp_offset_jlr",
+    },
+    # EXPERIMENTAL: 22DD06 read 0x00 with the car awake and not charging
+    # (2026-09-26) and 0x04 while AC charging (2026-10-03). Treated as a
+    # charging indicator until a DID sweep confirms its meaning.
+    "charge_indicator": {
+        "header": "7E4",
+        "command": "22DD06",
+        "description": "BECM DD06 (0 idle, non-zero while charging — experimental)",
+        "decoder": "u8_jlr",
+    },
 }
+
+
+def _derive_charging_status(result: dict[str, Any]) -> None:
+    """Set result["charging_status"] from what the car does expose.
+
+    No confirmed charging-status DID yet. Heuristic, in order of trust:
+    1. HV current sign if the car ever answers 22490C (P550e does not).
+    2. Experimental 22DD06 indicator: 0 idle, non-zero while charging.
+    3. Otherwise leave unknown (binary sensor shows off).
+    """
+    current = result.get("hv_battery_current")
+    if isinstance(current, (int, float)):
+        result["charging_status"] = "charging" if current < -0.5 else "not_charging"
+        return
+    indicator = result.get("charge_indicator")
+    if isinstance(indicator, int):
+        result["charging_status"] = "charging" if indicator > 0 else "not_charging"
 
 
 def _parse_frames(raw: str) -> list[bytes]:
@@ -334,6 +385,20 @@ def _decode_response(raw: str, decoder: str) -> Any | None:
         if idx is None or idx + 4 > len(data):
             return None
         return data[idx + 3] / 2.0
+
+    if decoder == "temp_offset_jlr":
+        # A - 40 → °C
+        idx = _find_uds_response(data)
+        if idx is None or idx + 4 > len(data):
+            return None
+        return data[idx + 3] - 40
+
+    if decoder == "u8_jlr":
+        # raw single byte
+        idx = _find_uds_response(data)
+        if idx is None or idx + 4 > len(data):
+            return None
+        return data[idx + 3]
 
     if decoder == "cell_voltage_jlr":
         # (A*256 + B) / 1000 → V
@@ -570,6 +635,7 @@ class RangeRoverBleClient:
             _LOGGER.error("BLE OBD communication error: %s", err)
             return result
 
+        _derive_charging_status(result)
         return result
 
     async def async_send_raw(
