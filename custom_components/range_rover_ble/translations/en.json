@@ -1,6 +1,13 @@
 {
   "config": {
     "step": {
+      "user": {
+        "title": "Select OBD-II adapter",
+        "description": "{hint}",
+        "data": {
+          "address": "Bluetooth device"
+        }
+      },
       "configure": {
         "title": "Configure BLE UUIDs",
         "description": "Leave defaults unless your OBD dongle uses non-standard GATT UUIDs.",
@@ -15,6 +22,10 @@
           "characteristic_uuid_write": "GATT characteristic UUID for sending commands to the dongle."
         }
       }
+    },
+    "abort": {
+      "no_unconfigured_devices": "No Bluetooth devices are visible to Home Assistant right now. The OBD adapter must be powered (plugged into the car), awake, and within range of a Home Assistant Bluetooth adapter or an ESPHome Bluetooth proxy with active connections enabled.",
+      "already_configured": "This adapter is already configured."
     }
   },
   "options": {

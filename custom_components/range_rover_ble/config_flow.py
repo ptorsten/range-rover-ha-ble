@@ -30,8 +30,19 @@ from .const import (
     DOMAIN,
 )
 
-# BLE local names to auto-discover — common ELM327 BLE adapter names
-LOCAL_NAMES = {"OBDBLE", "OBDII", "ELM327", "Vgate", "IOS-Vlink", "V-LINK"}
+# Substrings (matched case-insensitively) that mark a BLE device as a likely
+# OBD-II adapter. Vgate's current adapters advertise as "vLinker MC", "vLinker
+# FS", "vLinker MC-Android", "IOS-Vlink", ...; clones use "OBDII", "OBDBLE",
+# "ELM327", "V-LINK", "Carista", "OBDLink CX", "LELink", "iCar".
+OBD_NAME_KEYWORDS = (
+    "obd", "elm", "vlink", "v-link", "vgate", "icar", "carista", "lelink", "kiwi",
+)
+
+
+def _looks_like_obd_adapter(name: str | None) -> bool:
+    """Return True if the advertised name looks like an OBD-II adapter."""
+    lowered = (name or "").lower()
+    return any(kw in lowered for kw in OBD_NAME_KEYWORDS)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -46,6 +57,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._discovered_devices: dict[str, BluetoothServiceInfoBleak] = {}
         self._selected_device: BluetoothServiceInfoBleak | None = None
+        self._show_all_hint = False
 
     @staticmethod
     @callback
@@ -87,26 +99,50 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._discovered_devices[discovery.address] = discovery
         else:
             current_addresses = self._async_current_ids()
-            for discovery in async_discovered_service_info(self.hass):
+            likely: dict[str, BluetoothServiceInfoBleak] = {}
+            others: dict[str, BluetoothServiceInfoBleak] = {}
+            for discovery in async_discovered_service_info(self.hass, connectable=True):
                 if (
                     discovery.address in current_addresses
                     or discovery.address in self._discovered_devices
-                    or not any(
-                        discovery.name.startswith(local_name)
-                        for local_name in LOCAL_NAMES
-                    )
                 ):
                     continue
-                self._discovered_devices[discovery.address] = discovery
+                if _looks_like_obd_adapter(discovery.name):
+                    likely[discovery.address] = discovery
+                elif discovery.name and discovery.name != discovery.address:
+                    others[discovery.address] = discovery
+            if likely:
+                self._discovered_devices.update(likely)
+            else:
+                # Nothing advertised an OBD-like name. Rather than abort, let
+                # the user pick from every named, connectable device in range,
+                # strongest signal first. Adapters with odd names (or with no
+                # service UUID in their advertisement) are still reachable.
+                self._discovered_devices.update(
+                    dict(
+                        sorted(
+                            others.items(),
+                            key=lambda kv: kv[1].rssi or -999,
+                            reverse=True,
+                        )
+                    )
+                )
+                self._show_all_hint = True
 
         if not self._discovered_devices:
+            # Not a single named, connectable BLE device is visible to any
+            # Bluetooth source: the adapter is asleep, out of range, or HA has
+            # no Bluetooth adapter/proxy near the car.
             return self.async_abort(reason="no_unconfigured_devices")
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_ADDRESS): vol.In(
                     {
-                        service_info.address: f"{service_info.name} ({service_info.address})"
+                        service_info.address: (
+                            f"{service_info.name} ({service_info.address})"
+                            + (f"  RSSI {service_info.rssi}" if service_info.rssi is not None else "")
+                        )
                         for service_info in self._discovered_devices.values()
                     }
                 ),
@@ -116,6 +152,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=data_schema,
             errors=errors,
+            description_placeholders={
+                "hint": (
+                    "No device advertised an OBD-adapter name, so every named "
+                    "Bluetooth device in range is listed. Pick your adapter "
+                    "(for example vLinker, OBDII, V-LINK)."
+                    if self._show_all_hint
+                    else "Select your OBD-II Bluetooth adapter."
+                )
+            },
         )
 
     async def async_step_configure(
