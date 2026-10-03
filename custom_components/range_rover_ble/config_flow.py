@@ -235,6 +235,12 @@ class RangeRoverBleOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required(
                         "low_12v_poll", default=self.options.get("low_12v_poll", 7200)
                     ): int,
+                    vol.Required(
+                        "soc_raw_empty", default=self.options.get("soc_raw_empty", 20.0)
+                    ): vol.Coerce(float),
+                    vol.Required(
+                        "soc_raw_full", default=self.options.get("soc_raw_full", 96.0)
+                    ): vol.Coerce(float),
                     vol.Optional(
                         CONF_SERVICE_UUID,
                         default=self.options.get(CONF_SERVICE_UUID)

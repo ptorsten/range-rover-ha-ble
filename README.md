@@ -167,13 +167,20 @@ car's modules from sleeping, so polling is driven by what the car is doing:
 | Charging | DD06 charge indicator (or HV current if available) | `fast_poll` 60 s | yes |
 | Driving / on | speed > 0 or 12V ≥ 13.2 V (DC-DC running) | `fast_poll` 60 s | yes |
 | Awake but parked | answers, not charging, 12V ≥ threshold | `slow_poll` 15 min | **no**, passive poll |
-| Asleep | no answer to a single broadcast request | `xs_poll` 1 h | no |
+| Parked, asleep | adapter's own `ATRV` 12V reading < 13.2 V — **no CAN traffic at all** | `xs_poll` 1 h | no |
 | Out of range | adapter not advertising | 15 min, then 1 h | no |
-| Low 12V | parked and 12V < `low_12v_threshold` (12.2 V) | `low_12v_poll` 2 h, or pause | no |
+| Low 12V | parked and 12V < `low_12v_threshold` (12.2 V), from `ATRV` so it works while asleep | `low_12v_poll` 2 h, or pause | no |
 
 The **Refresh** button always does a full poll with wake-ups. The **Poll mode** diagnostic
 sensor shows the current state. All intervals and the 12V threshold are in the integration's
 options.
+
+### Displayed vs raw SOC
+
+The battery module reports SOC of the whole gross pack (38.2 kWh); the dashboard shows a usable
+window. **Battery charge (displayed, estimated)** maps raw onto that window using the
+`soc_raw_empty` / `soc_raw_full` options (defaults 20 % → 0 %, 96 % → 100 %). Calibrate by noting
+what the car displays at a few raw values and adjusting the two bounds.
 
 ## Overriding OBD Commands
 

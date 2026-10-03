@@ -262,6 +262,19 @@ COMMANDS: dict[str, dict[str, Any]] = {
 }
 
 
+def _parse_atrv(raw: str) -> float | None:
+    """Parse an ELM327 ATRV reply such as '13.8V' or '12.4V'."""
+    for token in raw.replace("\r", " ").split():
+        t = token.strip().upper().rstrip("V")
+        try:
+            v = float(t)
+        except ValueError:
+            continue
+        if 5.0 <= v <= 20.0:
+            return v
+    return None
+
+
 def _derive_charging_status(result: dict[str, Any]) -> None:
     """Set result["charging_status"] from what the car does expose.
 
@@ -524,7 +537,10 @@ class RangeRoverBleClient:
         return response
 
     async def async_get_data(
-        self, options: dict | None = None, wake_ecus: bool = True
+        self,
+        options: dict | None = None,
+        wake_ecus: bool = True,
+        passive_voltage_gate: float | None = None,
     ) -> dict[str, Any]:
         """Connect to the OBD adapter, initialise ELM327, and read all PIDs.
 
@@ -535,6 +551,12 @@ class RangeRoverBleClient:
         ``wake_ecus=False`` the poll is passive: one broadcast request to see if
         the bus answers at all; if it does not, return {} without touching the
         modules; if it does, read the PIDs without any keep-alives.
+
+        ``passive_voltage_gate`` (volts): when set and ``wake_ecus`` is False, the
+        adapter's own ``ATRV`` reading of the 12V rail is taken first. ATRV
+        touches no vehicle bus at all. If the rail is below the gate the DC-DC
+        converter is off, i.e. the car is neither on nor charging, and the poll
+        ends there with only ``bat_12v_adapter`` filled in.
 
         Returns a dict of sensor_key -> decoded_value ({} if the car is asleep).
         """
@@ -560,6 +582,24 @@ class RangeRoverBleClient:
                         _LOGGER.warning(
                             "ELM init command failed: %s -> %s", init_cmd, resp
                         )
+
+                # 12V rail as measured by the adapter itself (no CAN traffic).
+                rv = await self._send_command(client, b"ATRV\r", timeout=2.0)
+                volts = _parse_atrv(rv)
+                if volts is not None:
+                    result["bat_12v_adapter"] = volts
+                if (
+                    not wake_ecus
+                    and passive_voltage_gate is not None
+                    and volts is not None
+                    and volts < passive_voltage_gate
+                ):
+                    _LOGGER.debug(
+                        "12V rail %.2f V < %.2f V: DC-DC off, car parked; no CAN requests sent",
+                        volts, passive_voltage_gate,
+                    )
+                    await client.stop_notify(read_uuid)
+                    return result
 
                 if wake_ecus:
                     # Wake ECUs with TesterPresent (3E 00) and

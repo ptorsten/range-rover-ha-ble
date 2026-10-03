@@ -84,6 +84,23 @@ SENSOR_TYPES: dict[str, SensorEntityDescription] = {
         name="Poll mode",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    "soc_displayed": SensorEntityDescription(
+        key="soc_displayed",
+        icon="mdi:battery-charging-70",
+        name="Battery charge (displayed, estimated)",
+        native_unit_of_measurement="%",
+        suggested_display_precision=0,
+        device_class=SensorDeviceClass.BATTERY,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    "bat_12v_adapter": SensorEntityDescription(
+        key="bat_12v_adapter",
+        name="12V battery voltage (adapter)",
+        native_unit_of_measurement="V",
+        suggested_display_precision=1,
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
     "hv_battery_voltage": SensorEntityDescription(
         key="hv_battery_voltage",
         name="HV battery voltage",

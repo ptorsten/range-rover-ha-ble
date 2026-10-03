@@ -42,7 +42,9 @@
           "characteristic_uuid_read": "BLE read characteristic UUID",
           "characteristic_uuid_write": "BLE write characteristic UUID",
           "low_12v_threshold": "12V battery low threshold (V)",
-          "low_12v_poll": "Interval while 12V is low (s, 0 = pause)"
+          "low_12v_poll": "Interval while 12V is low (s, 0 = pause)",
+          "soc_raw_empty": "Raw SOC shown as 0 % (%)",
+          "soc_raw_full": "Raw SOC shown as 100 % (%)"
         },
         "data_description": {
           "cache_values": "Hold on to sensor values, even when there is no data available.",
@@ -53,7 +55,9 @@
           "characteristic_uuid_read": "GATT characteristic UUID for notifications/read.",
           "characteristic_uuid_write": "GATT characteristic UUID for sending commands.",
           "low_12v_threshold": "If the 12V reading on a parked car is below this, polling backs off to the low-12V interval to protect the battery.",
-          "low_12v_poll": "0 pauses polling entirely until a manual Refresh."
+          "low_12v_poll": "0 pauses polling entirely until a manual Refresh.",
+          "soc_raw_empty": "The dashboard hides a buffer at the bottom of the pack. Raw SOC at which the car displays 0 %.",
+          "soc_raw_full": "Raw SOC at which the car displays 100 %. Used for the 'Battery charge (displayed)' sensor."
         }
       }
     }

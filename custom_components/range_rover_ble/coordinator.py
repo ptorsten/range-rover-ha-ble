@@ -28,6 +28,10 @@ DEFAULT_LOW_12V_THRESHOLD = 12.2  # volts; below this on a parked car, back off 
 DEFAULT_LOW_12V_POLL = 7200     # seconds between polls while 12V is low (0 = pause)
 DEFAULT_CACHE_VALUES = True
 DEFAULT_FETCH_TIMEOUT = 90
+# Raw-SOC window the dashboard maps to 0–100 %. Hypothesis from a P550e:
+# dashboard 49–50 % at raw 57.3–57.4 %, and raw ~96 % when full.
+DEFAULT_SOC_RAW_EMPTY = 20.0
+DEFAULT_SOC_RAW_FULL = 96.0
 
 # 12V above this means the DC-DC converter is running: car on or charging.
 DCDC_ACTIVE_VOLTS = 13.2
@@ -42,10 +46,17 @@ MODE_UNKNOWN = "unknown"
 
 
 def determine_mode(data: dict[str, Any], low_12v_threshold: float) -> str:
-    """Classify what the car is doing from one poll's decoded data."""
+    """Classify what the car is doing from one poll's decoded data.
+
+    ``bat_12v_adapter`` (ATRV, no bus traffic) is available on every poll;
+    ``bat_12v_voltage`` (OBD PID 42) only when the car answered.
+    """
     if not data:
         return MODE_ASLEEP
     v12 = data.get("bat_12v_voltage")
+    if not isinstance(v12, (int, float)):
+        v12 = data.get("bat_12v_adapter")
+    has_can = any(k not in ("bat_12v_adapter", "poll_mode", "soc_displayed") for k in data)
     if data.get("charging_status") == "charging":
         return MODE_CHARGING
     speed = data.get("speed") or 0
@@ -53,15 +64,15 @@ def determine_mode(data: dict[str, Any], low_12v_threshold: float) -> str:
         return MODE_DRIVING
     if isinstance(v12, (int, float)) and v12 < low_12v_threshold:
         return MODE_LOW_12V
-    return MODE_IDLE
+    return MODE_IDLE if has_can else MODE_ASLEEP
 
-# How many consecutive "adapter not advertising" checks before we drop from the
-# slow interval to the extra-slow one. A BLE peripheral stops advertising while
-# another central (a phone, a laptop running discover.py) is connected to it,
-# so a short absence does not mean the car has left.
-ABSENT_CHECKS_BEFORE_XS = 6
-# Consecutive failed polls (connect timeouts etc.) before backing off to slow.
-FAILED_POLLS_BEFORE_SLOW = 3
+
+def displayed_soc(raw: float | None, raw_empty: float, raw_full: float) -> float | None:
+    """Map raw pack SOC onto the dashboard's 0–100 % usable window."""
+    if raw is None or raw_full <= raw_empty:
+        return None
+    pct = (raw - raw_empty) / (raw_full - raw_empty) * 100.0
+    return round(max(0.0, min(100.0, pct)), 1)
 
 
 class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
@@ -126,7 +137,11 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
 
         try:
             new_data = await asyncio.wait_for(
-                self.client.async_get_data(self.options, wake_ecus=wake),
+                self.client.async_get_data(
+                    self.options,
+                    wake_ecus=wake,
+                    passive_voltage_gate=None if wake else DCDC_ACTIVE_VOLTS,
+                ),
                 timeout=self._fetch_timeout,
             )
         except TimeoutError as err:
@@ -144,6 +159,11 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
 
         self._failed_polls = 0
         self.poll_mode = determine_mode(new_data, self._low_12v_threshold)
+        shown = displayed_soc(
+            new_data.get("state_of_charge"), self._soc_raw_empty, self._soc_raw_full
+        )
+        if shown is not None:
+            new_data["soc_displayed"] = shown
         if self.poll_mode in (MODE_CHARGING, MODE_DRIVING):
             self._set_interval(self._fast_poll_interval, f"Car is {self.poll_mode}")
         elif self.poll_mode == MODE_IDLE:
@@ -161,13 +181,12 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
                     new_data.get("bat_12v_voltage", 0), self._low_12v_threshold, self._low_12v_poll,
                 )
                 self._set_interval(self._low_12v_poll, "Low 12V battery")
-        else:  # asleep
-            self._set_interval(self._xs_poll_interval, "Car asleep")
+        else:  # asleep / parked with DC-DC off
+            self._set_interval(self._xs_poll_interval, "Car parked and asleep")
 
         if self._cache_values:
             self._cache_data.update(new_data)
-            if new_data:
-                self._cache_data["poll_mode"] = self.poll_mode
+            self._cache_data["poll_mode"] = self.poll_mode
             return self._cache_data
         new_data["poll_mode"] = self.poll_mode
         return new_data
@@ -194,6 +213,8 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._xs_poll_interval = options.get("xs_poll", DEFAULT_XS_POLL)
         self._low_12v_threshold = float(options.get("low_12v_threshold", DEFAULT_LOW_12V_THRESHOLD))
         self._low_12v_poll = int(options.get("low_12v_poll", DEFAULT_LOW_12V_POLL))
+        self._soc_raw_empty = float(options.get("soc_raw_empty", DEFAULT_SOC_RAW_EMPTY))
+        self._soc_raw_full = float(options.get("soc_raw_full", DEFAULT_SOC_RAW_FULL))
         self._cache_values = options.get("cache_values", DEFAULT_CACHE_VALUES)
         self._fetch_timeout = float(
             options.get("fetch_timeout", DEFAULT_FETCH_TIMEOUT)
