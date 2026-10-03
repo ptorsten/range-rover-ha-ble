@@ -7,6 +7,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, NAME
@@ -76,6 +77,12 @@ SENSOR_TYPES: dict[str, SensorEntityDescription] = {
         icon="mdi:ev-station",
         name="Charge indicator (DD06, experimental)",
         state_class=SensorStateClass.MEASUREMENT,
+    ),
+    "poll_mode": SensorEntityDescription(
+        key="poll_mode",
+        icon="mdi:car-clock",
+        name="Poll mode",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     "hv_battery_voltage": SensorEntityDescription(
         key="hv_battery_voltage",

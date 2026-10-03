@@ -32,24 +32,28 @@
     "step": {
       "init": {
         "title": "Settings",
-        "description": "Settings to control the behaviour of this integration",
+        "description": "Polling is driven by what the car is doing. Charging or driving: fast interval, modules kept awake. Awake but parked: slow interval, passive polls that never wake modules. Asleep or out of range: extra slow. Below the 12V threshold on a parked car: low-12V interval (0 = pause until you press Refresh).",
         "data": {
           "cache_values": "Cache sensor values",
-          "fast_poll": "Fast polling interval (s)",
-          "slow_poll": "Slow polling interval (s)",
-          "xs_poll": "Extra slow polling interval (s)",
+          "fast_poll": "Interval while charging or driving (s)",
+          "slow_poll": "Interval while awake but parked (s)",
+          "xs_poll": "Interval while asleep or out of range (s)",
           "service_uuid": "BLE service UUID",
           "characteristic_uuid_read": "BLE read characteristic UUID",
-          "characteristic_uuid_write": "BLE write characteristic UUID"
+          "characteristic_uuid_write": "BLE write characteristic UUID",
+          "low_12v_threshold": "12V battery low threshold (V)",
+          "low_12v_poll": "Interval while 12V is low (s, 0 = pause)"
         },
         "data_description": {
           "cache_values": "Hold on to sensor values, even when there is no data available.",
-          "fast_poll": "Polling rate to use when actively getting data from the car.",
-          "slow_poll": "Polling rate to use when the car is in range, but turned off.",
-          "xs_poll": "Polling rate to use when the car is out of range.",
+          "fast_poll": "Modules are awake anyway while charging or driving, so frequent polls cost nothing extra.",
+          "slow_poll": "Each passive poll is one broadcast request; it does not send keep-alives, but any CAN traffic can delay module sleep, so keep this long.",
+          "xs_poll": "Used when the car did not answer or the adapter is not advertising.",
           "service_uuid": "GATT service UUID for the OBD BLE dongle. Change only if your dongle uses different UUIDs.",
           "characteristic_uuid_read": "GATT characteristic UUID for notifications/read.",
-          "characteristic_uuid_write": "GATT characteristic UUID for sending commands."
+          "characteristic_uuid_write": "GATT characteristic UUID for sending commands.",
+          "low_12v_threshold": "If the 12V reading on a parked car is below this, polling backs off to the low-12V interval to protect the battery.",
+          "low_12v_poll": "0 pauses polling entirely until a manual Refresh."
         }
       }
     }

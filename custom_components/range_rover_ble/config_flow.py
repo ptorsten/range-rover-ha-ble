@@ -220,13 +220,20 @@ class RangeRoverBleOptionsFlowHandler(config_entries.OptionsFlow):
                         "cache_values", default=self.options.get("cache_values", False)
                     ): bool,
                     vol.Required(
-                        "fast_poll", default=self.options.get("fast_poll", 10)
+                        "fast_poll", default=self.options.get("fast_poll", 60)
                     ): int,
                     vol.Required(
-                        "slow_poll", default=self.options.get("slow_poll", 300)
+                        "slow_poll", default=self.options.get("slow_poll", 900)
                     ): int,
                     vol.Required(
                         "xs_poll", default=self.options.get("xs_poll", 3600)
+                    ): int,
+                    vol.Required(
+                        "low_12v_threshold",
+                        default=self.options.get("low_12v_threshold", 12.2),
+                    ): vol.Coerce(float),
+                    vol.Required(
+                        "low_12v_poll", default=self.options.get("low_12v_poll", 7200)
                     ): int,
                     vol.Optional(
                         CONF_SERVICE_UUID,

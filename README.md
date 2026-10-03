@@ -157,6 +157,24 @@ Default ranges are `4900-49FF`, `D900-D9FF`, `DD00-DDFF`; widen with `--range 00
 
 ---
 
+## Polling policy and 12V protection
+
+Every poll puts requests on the car's CAN bus, and TesterPresent keep-alives stop a parked
+car's modules from sleeping, so polling is driven by what the car is doing:
+
+| Car state (from the last poll) | How it is detected | Interval (default) | Wakes modules? |
+|---|---|---|---|
+| Charging | DD06 charge indicator (or HV current if available) | `fast_poll` 60 s | yes |
+| Driving / on | speed > 0 or 12V ≥ 13.2 V (DC-DC running) | `fast_poll` 60 s | yes |
+| Awake but parked | answers, not charging, 12V ≥ threshold | `slow_poll` 15 min | **no**, passive poll |
+| Asleep | no answer to a single broadcast request | `xs_poll` 1 h | no |
+| Out of range | adapter not advertising | 15 min, then 1 h | no |
+| Low 12V | parked and 12V < `low_12v_threshold` (12.2 V) | `low_12v_poll` 2 h, or pause | no |
+
+The **Refresh** button always does a full poll with wake-ups. The **Poll mode** diagnostic
+sensor shows the current state. All intervals and the 12V threshold are in the integration's
+options.
+
 ## Overriding OBD Commands
 
 Create `config/custom_components/range_rover_ble/overrides.yaml` to customise or add PIDs:

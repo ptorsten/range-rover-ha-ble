@@ -523,10 +523,20 @@ class RangeRoverBleClient:
         response = response.replace(">", "").strip()
         return response
 
-    async def async_get_data(self, options: dict | None = None) -> dict[str, Any]:
+    async def async_get_data(
+        self, options: dict | None = None, wake_ecus: bool = True
+    ) -> dict[str, Any]:
         """Connect to the OBD adapter, initialise ELM327, and read all PIDs.
 
-        Returns a dict of sensor_key -> decoded_value.
+        ``wake_ecus=True`` sends TesterPresent / ExtendedDiagnosticSession to the
+        battery and charger modules first and keeps them awake during the poll.
+        That is right while the car is charging or driving, but on a parked car
+        it stops the modules from sleeping and drains the 12V battery. With
+        ``wake_ecus=False`` the poll is passive: one broadcast request to see if
+        the bus answers at all; if it does not, return {} without touching the
+        modules; if it does, read the PIDs without any keep-alives.
+
+        Returns a dict of sensor_key -> decoded_value ({} if the car is asleep).
         """
         options = options or {}
         read_uuid = options.get("characteristic_uuid_read", self._read_uuid)
@@ -551,21 +561,31 @@ class RangeRoverBleClient:
                             "ELM init command failed: %s -> %s", init_cmd, resp
                         )
 
-                # Wake ECUs with TesterPresent (3E 00) and
-                # ExtendedDiagnosticSession (10 03) — needed when the car
-                # is off but charging, as the CAN gateway and ECUs may be
-                # in sleep mode.
-                for wake_header in WAKEUP_HEADERS:
-                    await self._send_command(
-                        client, f"ATSH{wake_header}\r".encode(), timeout=2.0
-                    )
-                    resp = await self._send_command(
-                        client, b"3E00\r", timeout=3.0
-                    )
-                    _LOGGER.debug("TesterPresent %s -> %s", wake_header, resp)
-                    await self._send_command(
-                        client, b"1003\r", timeout=3.0
-                    )
+                if wake_ecus:
+                    # Wake ECUs with TesterPresent (3E 00) and
+                    # ExtendedDiagnosticSession (10 03) so the battery and
+                    # charger modules answer even if the gateway was dozing.
+                    for wake_header in WAKEUP_HEADERS:
+                        await self._send_command(
+                            client, f"ATSH{wake_header}\r".encode(), timeout=2.0
+                        )
+                        resp = await self._send_command(
+                            client, b"3E00\r", timeout=3.0
+                        )
+                        _LOGGER.debug("TesterPresent %s -> %s", wake_header, resp)
+                        await self._send_command(
+                            client, b"1003\r", timeout=3.0
+                        )
+                else:
+                    # Passive probe: a single standard OBD broadcast. A sleeping
+                    # car answers NO DATA and we leave it alone.
+                    await self._send_command(client, b"ATSH7DF\r", timeout=2.0)
+                    last_header = "7DF"
+                    probe = await self._send_command(client, b"0142\r", timeout=3.0)
+                    if not probe or "NO DATA" in probe.upper() or "ERROR" in probe.upper():
+                        _LOGGER.debug("Passive probe got %r: car asleep, not waking it", probe)
+                        await client.stop_notify(read_uuid)
+                        return result
 
                 # Read each PID
                 pid_count = 0
@@ -608,7 +628,7 @@ class RangeRoverBleClient:
 
                     # Periodically re-send TesterPresent to keep ECUs awake
                     pid_count += 1
-                    if pid_count % 6 == 0:
+                    if wake_ecus and pid_count % 6 == 0:
                         saved_header = last_header
                         for wake_header in WAKEUP_HEADERS:
                             await self._send_command(
