@@ -56,6 +56,65 @@ SLEEP_PROBE_COMMANDS: list[tuple[str, str]] = [
     ("ATPPS", "ELM327 programmable parameters (PP 0E/0F = low power)"),
 ]
 
+# ---------------------------------------------------------------------------
+# DID sweep: brute-force ReadDataByIdentifier over ranges and record every
+# DID that answers. Two runs in different car states (charging / unplugged)
+# diffed against each other point at the DIDs that encode that state.
+# ---------------------------------------------------------------------------
+DEFAULT_SWEEP_ECUS = ["7E4", "7E5", "7E6"]
+DEFAULT_SWEEP_RANGES = ["4900-49FF", "D900-D9FF", "DD00-DDFF"]
+SWEEP_KEEPALIVE_EVERY = 25
+
+
+def parse_did_ranges(spec) -> list[int]:
+    """'4900-49FF,DD06' (or a list of such) -> sorted list of DIDs."""
+    if isinstance(spec, str):
+        spec = [spec]
+    dids: set[int] = set()
+    for item in spec:
+        for part in str(item).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                lo, hi = part.split("-", 1)
+                dids.update(range(int(lo, 16), int(hi, 16) + 1))
+            else:
+                dids.add(int(part, 16))
+    return sorted(dids)
+
+
+def guess_values(payload_hex: str) -> str:
+    """Plausible interpretations of a DID's data bytes, for the report."""
+    b = bytes.fromhex(payload_hex)
+    if not b:
+        return ""
+    parts = [f"u8={b[0]}", f"u8-40={b[0] - 40}"]
+    if len(b) >= 2:
+        u16 = int.from_bytes(b[:2], "big")
+        parts += [f"u16={u16}", f"u16/100={u16 / 100:.2f}"]
+    return "  ".join(parts)
+
+
+def compare_sweeps(a: dict, b: dict) -> dict:
+    """Diff two sweep results ({ecu: {did: {"hex":..}}}). Returns per-ECU changes."""
+    out: dict = {}
+    for ecu in sorted(set(a) | set(b)):
+        ha, hb = a.get(ecu, {}), b.get(ecu, {})
+        changed = [
+            {"did": d, "a": ha[d]["hex"], "b": hb[d]["hex"]}
+            for d in sorted(set(ha) & set(hb))
+            if ha[d]["hex"] != hb[d]["hex"]
+        ]
+        out[ecu] = {
+            "unchanged": len(set(ha) & set(hb)) - len(changed),
+            "changed": changed,
+            "only_a": sorted(set(ha) - set(hb)),
+            "only_b": sorted(set(hb) - set(ha)),
+        }
+    return out
+
+
 # Known BLE OBD adapter GATT layouts. If the configured UUIDs are not present
 # on the connected device we fall back to the first of these that is.
 UUID_CANDIDATES: list[dict[str, str]] = [
@@ -148,18 +207,6 @@ COMMANDS: dict[str, dict[str, Any]] = {
         "description": "HV battery pack voltage",
         "decoder": "hv_voltage_jlr",
     },
-    "hv_battery_current": {
-        "header": "7E4",
-        "command": "22490C",
-        "description": "HV battery pack current",
-        "decoder": "hv_current_jlr",
-    },
-    "hv_battery_temp": {
-        "header": "7E4",
-        "command": "224905",
-        "description": "HV battery temperature",
-        "decoder": "hv_temp_jlr",
-    },
     "soh_avg": {
         "header": "7E4",
         "command": "224918",
@@ -204,27 +251,6 @@ COMMANDS: dict[str, dict[str, Any]] = {
         "description": "Hybrid battery pack remaining life (standard PID)",
         "decoder": "soc_std",
     },
-    # --- BCCM (Battery Charge Control Module) at 7E5 ---
-    # The BCCM manages charging and may respond when the BECM doesn't
-    # (e.g. car off but plugged in). Same DIDs, different ECU address.
-    "bccm_soc": {
-        "header": "7E5",
-        "command": "224910",
-        "description": "BCCM: HV battery SOC",
-        "decoder": "soc_jlr",
-    },
-    "bccm_voltage": {
-        "header": "7E5",
-        "command": "22490F",
-        "description": "BCCM: HV battery voltage",
-        "decoder": "hv_voltage_jlr",
-    },
-    "bccm_current": {
-        "header": "7E5",
-        "command": "22490C",
-        "description": "BCCM: HV battery current",
-        "decoder": "hv_current_jlr",
-    },
     # --- Validated on a P550e (2026-09/10) ---
     "soh_min": {
         "header": "7E4",
@@ -250,22 +276,9 @@ COMMANDS: dict[str, dict[str, Any]] = {
         "description": "HV battery plate temperature 2",
         "decoder": "temp_offset_jlr",
     },
-    # Unknown BECM DIDs kept for research (sensors disabled by default).
-    # DD06 read 0 idle, 4 during charge ramp-up, 0 again mid-charge: not a
-    # charging flag. DD05 was 15 °C idle and 48 °C while charging: some
-    # charger/coolant temperature.
-    "becm_dd06": {
-        "header": "7E4",
-        "command": "22DD06",
-        "description": "BECM DD06 (unknown)",
-        "decoder": "u8_jlr",
-    },
-    "becm_dd05_temp": {
-        "header": "7E4",
-        "command": "22DD05",
-        "description": "BECM DD05 temperature (unknown sensor)",
-        "decoder": "temp_offset_jlr",
-    },
+    # Rejected by the P550e (7F 22 31) and therefore not polled: 22490C HV
+    # current, 224905 battery temp, every DID tried on BCCM 7E5 / PCM 7E0.
+    # Use the "Sweep DIDs" button to look for the real ones.
 }
 
 
@@ -759,6 +772,63 @@ class RangeRoverBleClient:
         finally:
             await client.disconnect()
         return out
+
+    async def async_sweep(
+        self,
+        ecus: list[str],
+        dids: list[int],
+        options: dict | None = None,
+        progress=None,
+    ) -> dict[str, dict[str, dict[str, str]]]:
+        """Read every DID in ``dids`` on each ECU; return {ecu: {DID: {hex, raw}}}.
+
+        One BLE session for the whole sweep. Sends TesterPresent and
+        ExtendedDiagnosticSession first and a keep-alive every
+        SWEEP_KEEPALIVE_EVERY requests, so run it while the car is awake
+        (charging, or just unlocked). ``progress(ecu, done, total, hits)`` is
+        called periodically if given.
+        """
+        options = options or {}
+        read_uuid = options.get("characteristic_uuid_read", self._read_uuid)
+        write_uuid = options.get("characteristic_uuid_write", self._write_uuid)
+        results: dict[str, dict[str, dict[str, str]]] = {}
+
+        client = await self._connect()
+        try:
+            read_uuid, write_uuid = _resolve_uuids(client, read_uuid, write_uuid)
+            self._write_uuid = write_uuid
+            await client.start_notify(read_uuid, self._notification_handler)
+            for init_cmd in ELM_INIT_COMMANDS:
+                await self._send_command(client, init_cmd, timeout=3.0)
+
+            for ecu in ecus:
+                hits: dict[str, dict[str, str]] = {}
+                results[ecu] = hits
+                await self._send_command(client, f"ATSH{ecu}\r".encode(), timeout=2.0)
+                tp = await self._send_command(client, b"3E00\r", timeout=3.0)
+                if not tp or "NO DATA" in tp.upper():
+                    _LOGGER.info("Sweep: %s does not answer TesterPresent, skipping", ecu)
+                    continue
+                await self._send_command(client, b"1003\r", timeout=3.0)
+
+                for n, did in enumerate(dids):
+                    if n and n % SWEEP_KEEPALIVE_EVERY == 0:
+                        await self._send_command(client, b"3E00\r", timeout=2.0)
+                        if progress:
+                            progress(ecu, n, len(dids), len(hits))
+                    raw = await self._send_command(client, f"22{did:04X}\r".encode(), timeout=2.0)
+                    up = (raw or "").upper().replace("\r", " ").strip()
+                    if not up or "NO DATA" in up or "ERROR" in up or "?" in up:
+                        continue
+                    data = b"".join(_parse_frames(up))   # reassemble multi-frame
+                    if len(data) >= 3 and data[0] == 0x62 and int.from_bytes(data[1:3], "big") == did:
+                        hits[f"{did:04X}"] = {"hex": data[3:].hex().upper(), "raw": up}
+                if progress:
+                    progress(ecu, len(dids), len(dids), len(hits))
+            await client.stop_notify(read_uuid)
+        finally:
+            await client.disconnect()
+        return results
 
     async def async_run_discovery(self, options: dict | None = None) -> dict[str, Any]:
         """Run a full PID discovery scan across all ECUs.

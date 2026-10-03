@@ -18,3 +18,30 @@ send_raw_commands:
       default: true
       selector:
         boolean:
+
+sweep_dids:
+  name: Sweep DIDs
+  description: >
+    Brute-force ReadDataByIdentifier over DID ranges on the given ECUs, store the
+    result, and post a notification. If an earlier run with a different label
+    exists, the DIDs whose bytes changed are listed — run once while charging and
+    once unplugged to find the charging-status DID. Polling pauses during the sweep.
+  fields:
+    ecus:
+      name: ECUs
+      description: Request headers to sweep. Default 7E4 (BECM), 7E5 (BCCM), 7E6.
+      example: '["7E4", "7E5"]'
+      selector:
+        object:
+    ranges:
+      name: DID ranges
+      description: Hex ranges LO-HI. Default 4900-49FF, D900-D9FF, DD00-DDFF.
+      example: '["4900-49FF", "DD00-DDFF"]'
+      selector:
+        object:
+    label:
+      name: Label
+      description: Car state for this run (e.g. charging, unplugged). Defaults to the current poll mode.
+      example: charging
+      selector:
+        text:

@@ -78,6 +78,24 @@
           "description": "Also post the replies as a persistent notification."
         }
       }
+    },
+    "sweep_dids": {
+      "name": "Sweep DIDs",
+      "description": "Read every DID in the given ranges on the given ECUs, store the result and report which bytes changed since the last run in a different car state.",
+      "fields": {
+        "ecus": {
+          "name": "ECUs",
+          "description": "Request headers to sweep (default 7E4, 7E5, 7E6)."
+        },
+        "ranges": {
+          "name": "DID ranges",
+          "description": "Hex ranges LO-HI (default 4900-49FF, D900-D9FF, DD00-DDFF)."
+        },
+        "label": {
+          "name": "Label",
+          "description": "Car state for this run; defaults to the current poll mode."
+        }
+      }
     }
   }
 }

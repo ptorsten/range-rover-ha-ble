@@ -131,6 +131,7 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._absent_checks = 0
         self._failed_polls = 0
         self.poll_mode: str = MODE_UNKNOWN
+        self.sweep_running = False     # a DID sweep owns the BLE link; skip polls
         self._soc_samples: deque[tuple[float, float]] = deque()
         self._force_wake_next = True   # first poll and manual refreshes wake the modules
         self.options = options
@@ -148,6 +149,8 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via BLE OBD adapter."""
+        if self.sweep_running:
+            return self._cache_data if self._cache_values else (self.data or {})
         available = async_address_present(self.hass, self._address, connectable=True)
         if not available:
             self._absent_checks += 1

@@ -31,6 +31,7 @@ from .const import (
 )
 from .coordinator import RangeRoverBleDataUpdateCoordinator
 from .obd_client import RangeRoverBleClient
+from .sweep import run_sweep
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -63,6 +64,35 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
                 notification_id="range_rover_ble_raw",
             )
         return {"replies": [{"command": c, "reply": r} for c, r in replies]}
+
+    async def _handle_sweep(call: ServiceCall) -> None:
+        items = list(hass.data.get(DOMAIN, {}).items())
+        if not items:
+            raise vol.Invalid("No Range Rover BLE adapter is configured")
+        entry_id, coordinator = items[0]
+        hass.async_create_background_task(
+            run_sweep(
+                hass, coordinator, entry_id,
+                ecus=call.data.get("ecus"),
+                ranges=call.data.get("ranges"),
+                label=call.data.get("label"),
+            ),
+            "range_rover_ble DID sweep (service)",
+        )
+
+    if not hass.services.has_service(DOMAIN, "sweep_dids"):
+        hass.services.async_register(
+            DOMAIN,
+            "sweep_dids",
+            _handle_sweep,
+            schema=vol.Schema(
+                {
+                    vol.Optional("ecus"): vol.All(vol.Coerce(list), [str]),
+                    vol.Optional("ranges"): vol.All(vol.Coerce(list), [str]),
+                    vol.Optional("label"): str,
+                }
+            ),
+        )
 
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_RAW):
         hass.services.async_register(

@@ -127,7 +127,10 @@ python3 scripts/discover.py <addr>               # same, for a specific adapter
 python3 scripts/discover.py --test               # offline self-test against a simulated car
 ```
 
-**Finding charging status.** No known DID for charge state has been confirmed yet, so sweep the
+**Finding charging status.** No known DID for charge state has been confirmed yet. The easiest way is the
+**Sweep DIDs** button in Home Assistant (Diagnostic section of the device): press it once while charging and
+once unplugged; the second run's notification lists every DID whose bytes changed. The service
+`range_rover_ble.sweep_dids` takes custom ECUs, ranges and a label. From a laptop, sweep the
 battery (7E4), charger (7E5) and hybrid (7E6) ECUs in two states and diff them. DIDs whose bytes
 change are your charging-status / charge-power candidates:
 

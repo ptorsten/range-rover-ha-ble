@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN, NAME
 from .entity import RangeRoverBleEntity
 from .obd_client import SLEEP_PROBE_COMMANDS
+from .sweep import run_sweep
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ async def async_setup_entry(
         RangeRoverBleRefreshButton(coordinator, entry),
         RangeRoverBleDiscoveryButton(coordinator, entry),
         RangeRoverBleAdapterProbeButton(coordinator, entry),
+        RangeRoverBleSweepButton(coordinator, entry),
     ])
 
 
@@ -173,4 +175,23 @@ class RangeRoverBleAdapterProbeButton(RangeRoverBleEntity, ButtonEntity):
             "\n".join(lines),
             title="Range Rover BLE Adapter Probe",
             notification_id="range_rover_ble_adapter_probe",
+        )
+
+
+class RangeRoverBleSweepButton(RangeRoverBleEntity, ButtonEntity):
+    """Button that sweeps DID ranges in the background and reports the diff."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:radar"
+    _attr_name = f"{NAME} Sweep DIDs"
+
+    def __init__(self, coordinator, config_entry) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator, config_entry)
+
+    async def async_press(self) -> None:
+        """Start the sweep without blocking the button press."""
+        self.hass.async_create_background_task(
+            run_sweep(self.hass, self.coordinator, self.config_entry.entry_id),
+            "range_rover_ble DID sweep",
         )

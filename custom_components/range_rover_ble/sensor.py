@@ -9,6 +9,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, NAME
 from .entity import RangeRoverBleEntity
@@ -72,23 +73,6 @@ SENSOR_TYPES: dict[str, SensorEntityDescription] = {
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    "becm_dd06": SensorEntityDescription(
-        key="becm_dd06",
-        icon="mdi:help-circle-outline",
-        name="BECM DD06 (unknown)",
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    "becm_dd05_temp": SensorEntityDescription(
-        key="becm_dd05_temp",
-        name="BECM DD05 temperature (unknown sensor)",
-        native_unit_of_measurement="°C",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
     "poll_mode": SensorEntityDescription(
         key="poll_mode",
         icon="mdi:car-clock",
@@ -127,23 +111,6 @@ SENSOR_TYPES: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement="V",
         suggested_display_precision=1,
         device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "hv_battery_current": SensorEntityDescription(
-        key="hv_battery_current",
-        name="HV battery current",
-        native_unit_of_measurement="A",
-        suggested_display_precision=1,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "hv_battery_temp": SensorEntityDescription(
-        key="hv_battery_temp",
-        icon="mdi:thermometer",
-        name="HV battery temperature",
-        native_unit_of_measurement="°C",
-        suggested_display_precision=0,
-        device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     "soh_avg": SensorEntityDescription(
@@ -197,44 +164,24 @@ SENSOR_TYPES: dict[str, SensorEntityDescription] = {
         device_class=SensorDeviceClass.SPEED,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    "bccm_soc": SensorEntityDescription(
-        key="bccm_soc",
-        icon="mdi:battery-charging",
-        name="HV battery SOC (BCCM)",
-        native_unit_of_measurement="%",
-        suggested_display_precision=1,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "bccm_voltage": SensorEntityDescription(
-        key="bccm_voltage",
-        name="HV battery voltage (BCCM)",
-        native_unit_of_measurement="V",
-        suggested_display_precision=1,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    "bccm_current": SensorEntityDescription(
-        key="bccm_current",
-        name="HV battery current (BCCM)",
-        native_unit_of_measurement="A",
-        suggested_display_precision=1,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
 }
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
-):
-    """Set up sensor platform."""
+    hass: HomeAssistant, entry: ConfigEntry, async_add_devices
+) -> bool:
+    """Set up sensor platform and drop registry entries for removed sensors."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     entities = [
-        RangeRoverBleSensor(coordinator, entry, desc)
-        for desc in SENSOR_TYPES.values()
+        RangeRoverBleSensor(coordinator, entry, desc) for desc in SENSOR_TYPES.values()
     ]
-    async_add_entities(entities)
+    wanted = {e.unique_id for e in entities}
+    registry = er.async_get(hass)
+    for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if reg_entry.domain == "sensor" and reg_entry.unique_id not in wanted:
+            registry.async_remove(reg_entry.entity_id)
+    async_add_devices(entities)
+    return True
 
 
 class RangeRoverBleSensor(RangeRoverBleEntity, SensorEntity):
