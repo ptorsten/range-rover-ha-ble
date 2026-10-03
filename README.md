@@ -116,6 +116,43 @@ logger:
     custom_components.range_rover_ble: debug
 ```
 
+### Discovery script
+
+`scripts/discover.py` talks to the adapter directly from a laptop (needs `pip install bleak`).
+On macOS the adapter shows up with a CoreBluetooth UUID instead of a MAC; pass that UUID as-is.
+
+```bash
+python3 scripts/discover.py                      # scan, pick adapter, probe the known PID list
+python3 scripts/discover.py <addr>               # same, for a specific adapter
+python3 scripts/discover.py --test               # offline self-test against a simulated car
+```
+
+**Finding charging status.** No known DID for charge state has been confirmed yet, so sweep the
+battery (7E4), charger (7E5) and hybrid (7E6) ECUs in two states and diff them. DIDs whose bytes
+change are your charging-status / charge-power candidates:
+
+```bash
+python3 scripts/discover.py <addr> --sweep --label charging  --out charging.json
+python3 scripts/discover.py <addr> --sweep --label unplugged --out unplugged.json
+python3 scripts/discover.py --compare charging.json unplugged.json
+```
+
+Default ranges are `4900-49FF`, `D900-D9FF`, `DD00-DDFF`; widen with `--range 0000-FFFF --ecu 7E5`
+(a full sweep of one ECU takes hours over BLE).
+
+### Validated on a P550e (2026-09)
+
+| Request | Result |
+|---|---|
+| `7E4 224910/11/14` | SOC avg/min/max, `(A*256+B)/100` % — matches standard PID `015B` |
+| `7E4 22490F` | HV pack voltage `/100` V (~453 V at 96 % SOC, ~110 cells in series) |
+| `7E4 224903/04` | Cell voltage max/min, mV |
+| `7E4 224918/19/1A` | SOH `/2` %; `4919` reads lowest and `491A` highest, so min/max labels may be swapped |
+| `7E4 22492B/2C` | Battery plate temperatures, `A-40` °C |
+| `7E4 22DD04/05` | Track ambient temperature, not SOC |
+| `7E4 22490C`, `224905`, `22491B/1C`, `22DD07/0A/0B` | Rejected: `7F 22 31` requestOutOfRange |
+| Anything on `7E5` (BCCM) or `7E0` (PCM) | Rejected on the DIDs tried so far |
+
 ---
 
 ## Overriding OBD Commands

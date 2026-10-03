@@ -155,15 +155,47 @@ def _parse_hex_payload(raw: str) -> bytes | None:
     Handles multi-line responses and strips header bytes.
     Returns None on parse failure.
     """
-    clean = raw.replace(" ", "").replace("\r", "").replace("\n", "")
+    clean = raw.replace("\r", " ").replace("\n", " ").upper()
     # Remove common ELM noise
-    for noise in ("SEARCHING...", "NODATA", "?", "ERROR", "CANERROR", "BUSERROR"):
-        if noise in clean.upper():
+    for noise in ("SEARCHING...", "NO DATA", "NODATA", "?", "ERROR", "CAN ERROR", "BUS ERROR"):
+        if noise in clean:
             return None
-    try:
-        return bytes.fromhex(clean)
-    except ValueError:
+
+    # With ATH1 + ATS0 each frame is "<3-hex-digit CAN ID><PCI byte><data>",
+    # e.g. "7EC05624910258C". The 3-digit ID makes the frame odd-length, so
+    # bytes.fromhex() on the whole string fails; strip the ID per frame.
+    # A broadcast (7DF) can return one frame per ECU; some may be UDS
+    # negative responses (7F xx NRC) while another carries real data, so
+    # prefer the first non-7F frame.
+    payloads: list[bytes] = []
+    for frame in clean.split():
+        if len(frame) % 2 == 1 and len(frame) >= 5:
+            body = frame[3:]          # 11-bit CAN ID
+        elif len(frame) >= 10 and frame.startswith("18"):
+            body = frame[8:]          # 29-bit CAN ID
+        else:
+            body = frame
+        try:
+            data = bytes.fromhex(body)
+        except ValueError:
+            continue
+        if not data:
+            continue
+        pci = data[0]
+        if pci >> 4 == 0:             # ISO-TP single frame: low nibble = length
+            data = data[1 : 1 + (pci & 0x0F)]
+        elif pci >> 4 == 1 and len(data) > 2:  # first frame of a multi-frame reply
+            data = data[2:]
+        if data:
+            payloads.append(data)
+
+    if not payloads:
         return None
+    for data in payloads:
+        if data[0] != 0x7F:
+            return data
+    # Every ECU rejected the request (e.g. 7F 22 31 requestOutOfRange).
+    return None
 
 
 def _decode_response(raw: str, decoder: str) -> Any | None:
