@@ -149,8 +149,10 @@ Default ranges are `4900-49FF`, `D900-D9FF`, `DD00-DDFF`; widen with `--range 00
 | `7E4 224903/04` | Cell voltage max/min, mV |
 | `7E4 224918/19/1A` | SOH avg / min / max, `/2` % |
 | `7E4 22492B/2C` | Battery plate temperatures, `A-40` °C |
-| `7E4 22DD04/05` | Track ambient temperature, not SOC |
-| `7E4 22DD06` | Read `0x00` awake and idle, `0x04` while AC charging. Used as an experimental charge indicator until a DID sweep confirms it |
+| `7E4 22DD04` | Tracks ambient temperature, not SOC |
+| `7E4 22DD05` | A temperature: 15 °C idle, 48 °C while charging (charger/coolant?) — exposed as a disabled diagnostic sensor |
+| `7E4 22DD06` | 0 idle, 4 during charge ramp-up, 0 again mid-charge: **not** a charging flag. Disabled diagnostic sensor |
+| `7DF 0146` ambient | Answered by the battery module (plausible) and the hybrid module (always 0x00 → −40 °C); the decoder now skips sentinel replies. Reads a few °C above outside air |
 | `7E4 22490C`, `224905`, `22491B/1C`, `22DD07/0A/0B` | Rejected: `7F 22 31` requestOutOfRange |
 | Display vs raw SOC | Dashboard % = (raw − 20) / 76 × 100; confirmed at raw 57.3 → 49, 57.4 → 50, 60.2 → 53 (2026-10-03) |
 | Anything on `7E5` (BCCM) or `7E0` (PCM) | Rejected on the DIDs tried so far |
@@ -164,8 +166,9 @@ car's modules from sleeping, so polling is driven by what the car is doing:
 
 | Car state (from the last poll) | How it is detected | Interval (default) | Wakes modules? |
 |---|---|---|---|
-| Charging | DD06 charge indicator (or HV current if available) | `fast_poll` 60 s | yes |
-| Driving / on | speed > 0 or 12V ≥ 13.2 V (DC-DC running) | `fast_poll` 60 s | yes |
+| Charging | battery power from the raw-SOC slope ≥ 0.4 kW (or HV current if the car exposed it) | `fast_poll` 60 s | yes |
+| Driving | speed > 0 | `fast_poll` 60 s | yes |
+| On | 12V ≥ 13.2 V (DC-DC running), stationary, battery not charging | `fast_poll` 60 s | yes |
 | Awake but parked | answers, not charging, 12V ≥ threshold | `slow_poll` 15 min | **no**, passive poll |
 | Parked, asleep | adapter's own `ATRV` 12V reading < 13.2 V — **no CAN traffic at all** | `xs_poll` 1 h | no |
 | Out of range | adapter not advertising | 15 min, then 1 h | no |

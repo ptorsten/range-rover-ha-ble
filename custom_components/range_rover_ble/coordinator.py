@@ -43,6 +43,9 @@ DCDC_ACTIVE_VOLTS = 13.2
 
 MODE_CHARGING = "charging"
 MODE_DRIVING = "driving"
+MODE_ON = "on"             # DC-DC running, stationary, battery not charging (e.g. preconditioning)
+# Battery power (kW, from SOC slope) above which we call it charging.
+CHARGING_POWER_KW = 0.4
 MODE_IDLE = "idle"
 MODE_ASLEEP = "asleep"
 MODE_OUT_OF_RANGE = "out_of_range"
@@ -55,18 +58,26 @@ def determine_mode(data: dict[str, Any], low_12v_threshold: float) -> str:
 
     ``bat_12v_adapter`` (ATRV, no bus traffic) is available on every poll;
     ``bat_12v_voltage`` (OBD PID 42) only when the car answered.
+    ``hv_power_est`` (kW, + charging / - discharging) comes from the SOC slope
+    and is the charging signal, since the P550e exposes no charging DID.
     """
     if not data:
         return MODE_ASLEEP
     v12 = data.get("bat_12v_voltage")
     if not isinstance(v12, (int, float)):
         v12 = data.get("bat_12v_adapter")
-    has_can = any(k not in ("bat_12v_adapter", "poll_mode", "soc_displayed") for k in data)
+    has_can = any(k not in ("bat_12v_adapter", "poll_mode", "soc_displayed", "hv_power_est") for k in data)
+    speed = data.get("speed") or 0
+    power = data.get("hv_power_est")
+    dcdc_on = isinstance(v12, (int, float)) and v12 >= DCDC_ACTIVE_VOLTS
     if data.get("charging_status") == "charging":
         return MODE_CHARGING
-    speed = data.get("speed") or 0
-    if speed > 0 or (isinstance(v12, (int, float)) and v12 >= DCDC_ACTIVE_VOLTS):
+    if speed > 0:
         return MODE_DRIVING
+    if dcdc_on and isinstance(power, (int, float)) and power >= CHARGING_POWER_KW:
+        return MODE_CHARGING
+    if dcdc_on:
+        return MODE_ON
     if isinstance(v12, (int, float)) and v12 < low_12v_threshold:
         return MODE_LOW_12V
     return MODE_IDLE if has_can else MODE_ASLEEP
@@ -154,7 +165,7 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
         # Only wake the car's modules when we already know they are awake
         # (charging/driving) or the user asked for a refresh. Everything else
         # is a passive poll that leaves a sleeping car alone.
-        wake = self._force_wake_next or self.poll_mode in (MODE_CHARGING, MODE_DRIVING)
+        wake = self._force_wake_next or self.poll_mode in (MODE_CHARGING, MODE_DRIVING, MODE_ON)
         self._force_wake_next = False
 
         try:
@@ -180,12 +191,6 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("Failed to connect to OBD device")
 
         self._failed_polls = 0
-        self.poll_mode = determine_mode(new_data, self._low_12v_threshold)
-        shown = displayed_soc(
-            new_data.get("state_of_charge"), self._soc_raw_empty, self._soc_raw_full
-        )
-        if shown is not None:
-            new_data["soc_displayed"] = shown
 
         raw_soc = new_data.get("state_of_charge")
         if isinstance(raw_soc, (int, float)):
@@ -196,11 +201,20 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
             power = estimate_power_kw(self._soc_samples, self._pack_kwh)
             if power is not None:
                 new_data["hv_power_est"] = power
+            shown = displayed_soc(raw_soc, self._soc_raw_empty, self._soc_raw_full)
+            if shown is not None:
+                new_data["soc_displayed"] = shown
         else:
             # No SOC this poll (asleep / passive stop): a later slope across
             # the gap would be meaningless, so start over.
             self._soc_samples.clear()
-        if self.poll_mode in (MODE_CHARGING, MODE_DRIVING):
+
+        self.poll_mode = determine_mode(new_data, self._low_12v_threshold)
+        if "charging_status" not in new_data and new_data:
+            new_data["charging_status"] = (
+                "charging" if self.poll_mode == MODE_CHARGING else "not_charging"
+            )
+        if self.poll_mode in (MODE_CHARGING, MODE_DRIVING, MODE_ON):
             self._set_interval(self._fast_poll_interval, f"Car is {self.poll_mode}")
         elif self.poll_mode == MODE_IDLE:
             self._set_interval(self._slow_poll_interval, "Car awake but idle; passive polling")

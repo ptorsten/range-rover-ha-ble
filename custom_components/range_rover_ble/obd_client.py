@@ -250,14 +250,21 @@ COMMANDS: dict[str, dict[str, Any]] = {
         "description": "HV battery plate temperature 2",
         "decoder": "temp_offset_jlr",
     },
-    # EXPERIMENTAL: 22DD06 read 0x00 with the car awake and not charging
-    # (2026-09-26) and 0x04 while AC charging (2026-10-03). Treated as a
-    # charging indicator until a DID sweep confirms its meaning.
-    "charge_indicator": {
+    # Unknown BECM DIDs kept for research (sensors disabled by default).
+    # DD06 read 0 idle, 4 during charge ramp-up, 0 again mid-charge: not a
+    # charging flag. DD05 was 15 °C idle and 48 °C while charging: some
+    # charger/coolant temperature.
+    "becm_dd06": {
         "header": "7E4",
         "command": "22DD06",
-        "description": "BECM DD06 (0 idle, non-zero while charging — experimental)",
+        "description": "BECM DD06 (unknown)",
         "decoder": "u8_jlr",
+    },
+    "becm_dd05_temp": {
+        "header": "7E4",
+        "command": "22DD05",
+        "description": "BECM DD05 temperature (unknown sensor)",
+        "decoder": "temp_offset_jlr",
     },
 }
 
@@ -276,20 +283,42 @@ def _parse_atrv(raw: str) -> float | None:
 
 
 def _derive_charging_status(result: dict[str, Any]) -> None:
-    """Set result["charging_status"] from what the car does expose.
+    """Set result["charging_status"] from HV current sign, if the car exposes it.
 
-    No confirmed charging-status DID yet. Heuristic, in order of trust:
-    1. HV current sign if the car ever answers 22490C (P550e does not).
-    2. Experimental 22DD06 indicator: 0 idle, non-zero while charging.
-    3. Otherwise leave unknown (binary sensor shows off).
+    The P550e rejects the HV current DID, so for it the coordinator decides
+    from the raw-SOC slope (battery power) instead.
     """
     current = result.get("hv_battery_current")
     if isinstance(current, (int, float)):
         result["charging_status"] = "charging" if current < -0.5 else "not_charging"
-        return
-    indicator = result.get("charge_indicator")
-    if isinstance(indicator, int):
-        result["charging_status"] = "charging" if indicator > 0 else "not_charging"
+
+
+# Temperature decoders where a raw byte of 0x00 or 0xFF means "no reading".
+_TEMP_DECODERS = {"ambient_temp_std", "temp_offset_jlr", "hv_temp_jlr"}
+
+
+def _decode_best(lines: list[str], decoder: str) -> Any | None:
+    """Decode a (possibly multi-ECU) reply, preferring the first valid value.
+
+    A broadcast request (7DF) is answered by several modules in arrival order,
+    e.g. "7EC03414638" then "7EE03414600". The last one is not necessarily
+    the module that owns the sensor: on the P550e the hybrid module answers
+    the ambient PID with 0x00 (-40 °C) while the battery module has the real
+    value. Try each frame and return the first decodable value, skipping
+    sentinel temperature bytes.
+    """
+    for line in lines:
+        frames = _parse_frames(line)
+        if not frames:
+            continue
+        if decoder in _TEMP_DECODERS:
+            payload = _parse_hex_payload(line)
+            if payload is not None and len(payload) >= 3 and payload[-1] in (0x00, 0xFF):
+                continue
+        value = _decode_response(line, decoder)
+        if value is not None:
+            return value
+    return None
 
 
 def _parse_frames(raw: str) -> list[bytes]:
@@ -661,7 +690,7 @@ class RangeRoverBleClient:
                     if not lines:
                         continue
 
-                    value = _decode_response(lines[-1], cmd_def["decoder"])
+                    value = _decode_best(lines, cmd_def["decoder"])
                     if value is not None:
                         result[key] = value
                         _LOGGER.debug("Decoded %s = %s", key, value)

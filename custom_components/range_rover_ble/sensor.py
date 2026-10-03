@@ -72,11 +72,22 @@ SENSOR_TYPES: dict[str, SensorEntityDescription] = {
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    "charge_indicator": SensorEntityDescription(
-        key="charge_indicator",
-        icon="mdi:ev-station",
-        name="Charge indicator (DD06, experimental)",
+    "becm_dd06": SensorEntityDescription(
+        key="becm_dd06",
+        icon="mdi:help-circle-outline",
+        name="BECM DD06 (unknown)",
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    "becm_dd05_temp": SensorEntityDescription(
+        key="becm_dd05_temp",
+        name="BECM DD05 temperature (unknown sensor)",
+        native_unit_of_measurement="°C",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
     "poll_mode": SensorEntityDescription(
         key="poll_mode",
