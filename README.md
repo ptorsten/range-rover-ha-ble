@@ -234,6 +234,17 @@ _all_:
 
 ---
 
+## Acknowledgements
+
+This integration started as a fork of **[Nissan Leaf OBD BLE](https://github.com/pbutterworth/nissan-leaf-obd-ble)**
+by [@pbutterworth](https://github.com/pbutterworth), a Home Assistant integration for reading Nissan Leaf
+battery data over a BLE ELM327 adapter. The config flow, options, coordinator with tiered polling and
+the `overrides.yaml` mechanism come from that project. Thank you.
+
+The JLR / P550e protocol work (BECM DIDs, ELM327 frame parsing, DID sweep, adapter sleep tooling,
+state-driven polling and the derived sensors) is specific to this project.
+
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+MIT, see [LICENSE](LICENSE). The upstream project declares the MIT License as well; its notice is
+carried in this repository's LICENSE file.

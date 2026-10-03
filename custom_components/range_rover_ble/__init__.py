@@ -2,6 +2,9 @@
 
 For more details about this integration, please refer to
 https://github.com/ptorsten/range-rover-ha-ble
+
+Derived from "Nissan Leaf OBD BLE" by @pbutterworth
+(https://github.com/pbutterworth/nissan-leaf-obd-ble, MIT). See LICENSE.
 """
 
 import logging
