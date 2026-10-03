@@ -407,11 +407,15 @@ async def scan_adapters() -> list:
     return candidates
 
 
-async def _setup_adapter(client, elm: "ELM327BLE") -> tuple[str, str] | None:
+async def _setup_adapter(client, elm: "ELM327BLE", init=None) -> tuple[str, str] | None:
     """Pick GATT UUIDs, subscribe to notifications, run ELM327 init.
 
+    ``init`` defaults to ELM_INIT (which starts with ATZ). Pass a shorter list
+    when you must not reset the adapter, e.g. while changing its settings.
     Returns (write_uuid, notify_uuid) or None if no known UUID set matched.
     """
+    if init is None:
+        init = ELM_INIT
     services = client.services
     print("GATT services:")
     notify_uuid = None
@@ -443,7 +447,7 @@ async def _setup_adapter(client, elm: "ELM327BLE") -> tuple[str, str] | None:
     await client.start_notify(notify_uuid, elm._on_notify)
 
     print("\n--- ELM327 Initialisation ---\n")
-    for cmd, desc, timeout in ELM_INIT:
+    for cmd, desc, timeout in init:
         resp = await elm.send(client, write_uuid, cmd, timeout)
         ok = "ERROR" not in resp.upper() and "TIMEOUT" not in resp
         status = "  OK" if ok else "WARN"
@@ -1051,7 +1055,9 @@ async def raw(address: str, commands: list[str]):
     elm = ELM327BLE()
     async with open_client(address) as client:
         print(f"Connected: {client.is_connected}\n")
-        uuids = await _setup_adapter(client, elm)
+        # No ATZ here: a reset would apply/undo programmable-parameter changes
+        # mid-session. Just turn echo off so replies are clean.
+        uuids = await _setup_adapter(client, elm, init=[("ATE0", "Echo off", 2.0)])
         if not uuids:
             return
         write_uuid, notify_uuid = uuids
