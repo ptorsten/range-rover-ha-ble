@@ -28,8 +28,8 @@ DEFAULT_LOW_12V_THRESHOLD = 12.2  # volts; below this on a parked car, back off 
 DEFAULT_LOW_12V_POLL = 7200     # seconds between polls while 12V is low (0 = pause)
 DEFAULT_CACHE_VALUES = True
 DEFAULT_FETCH_TIMEOUT = 90
-# Raw-SOC window the dashboard maps to 0–100 %. Hypothesis from a P550e:
-# dashboard 49–50 % at raw 57.3–57.4 %, and raw ~96 % when full.
+# Raw-SOC window the dashboard maps to 0–100 %. Confirmed on a P550e at raw
+# 57.3 / 57.4 / 60.2 % -> shown 49 / 50 / 53 %, and raw ~96 % when full.
 DEFAULT_SOC_RAW_EMPTY = 20.0
 DEFAULT_SOC_RAW_FULL = 96.0
 

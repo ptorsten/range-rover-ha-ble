@@ -152,7 +152,7 @@ Default ranges are `4900-49FF`, `D900-D9FF`, `DD00-DDFF`; widen with `--range 00
 | `7E4 22DD04/05` | Track ambient temperature, not SOC |
 | `7E4 22DD06` | Read `0x00` awake and idle, `0x04` while AC charging. Used as an experimental charge indicator until a DID sweep confirms it |
 | `7E4 22490C`, `224905`, `22491B/1C`, `22DD07/0A/0B` | Rejected: `7F 22 31` requestOutOfRange |
-| Display vs raw SOC | Dashboard showed 49–50 % while raw SOC was 57.3–57.4 % (2026-10-03); the display uses a remapped usable window |
+| Display vs raw SOC | Dashboard % = (raw − 20) / 76 × 100; confirmed at raw 57.3 → 49, 57.4 → 50, 60.2 → 53 (2026-10-03) |
 | Anything on `7E5` (BCCM) or `7E0` (PCM) | Rejected on the DIDs tried so far |
 
 ---
@@ -179,8 +179,9 @@ options.
 
 The battery module reports SOC of the whole gross pack (38.2 kWh); the dashboard shows a usable
 window. **Battery charge (displayed, estimated)** maps raw onto that window using the
-`soc_raw_empty` / `soc_raw_full` options (defaults 20 % → 0 %, 96 % → 100 %). Calibrate by noting
-what the car displays at a few raw values and adjusting the two bounds.
+`soc_raw_empty` / `soc_raw_full` options (defaults 20 % → 0 %, 96 % → 100 %). Validated on a P550e
+at three points: raw 57.3 / 57.4 / 60.2 % showed 49 / 50 / 53 %, and raw ~96 % showed full. Adjust
+the two bounds if your car differs.
 
 ## Overriding OBD Commands
 
