@@ -24,6 +24,14 @@ DEFAULT_XS_POLL = 3600
 DEFAULT_CACHE_VALUES = True
 DEFAULT_FETCH_TIMEOUT = 90
 
+# How many consecutive "adapter not advertising" checks before we drop from the
+# slow interval to the extra-slow one. A BLE peripheral stops advertising while
+# another central (a phone, a laptop running discover.py) is connected to it,
+# so a short absence does not mean the car has left.
+ABSENT_CHECKS_BEFORE_XS = 6
+# Consecutive failed polls (connect timeouts etc.) before backing off to slow.
+FAILED_POLLS_BEFORE_SLOW = 3
+
 
 class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the BLE OBD adapter."""
@@ -46,49 +54,67 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._address = address
         self.client = client
         self._cache_data: dict[str, Any] = {}
+        self._absent_checks = 0
+        self._failed_polls = 0
         self.options = options
+
+    def _set_interval(self, seconds: float, why: str) -> None:
+        new = timedelta(seconds=seconds)
+        if self.update_interval != new:
+            _LOGGER.debug("%s: polling every %s", why, new)
+            self.update_interval = new
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via BLE OBD adapter."""
-        _LOGGER.debug("Checking if BLE OBD device is available")
         available = async_address_present(self.hass, self._address, connectable=True)
         if not available:
-            _LOGGER.debug("Car out of range, switching to ultra slow polling")
-            self.update_interval = timedelta(seconds=self._xs_poll_interval)
-            if self.options.get("cache_values", False):
-                return self._cache_data
-            return {}
+            self._absent_checks += 1
+            if self._absent_checks >= ABSENT_CHECKS_BEFORE_XS:
+                self._set_interval(self._xs_poll_interval, "Adapter not seen for a while")
+            else:
+                self._set_interval(
+                    self._slow_poll_interval,
+                    "Adapter not advertising (out of range, asleep, or another device is connected)",
+                )
+            return self._cache_data if self._cache_values else {}
+        self._absent_checks = 0
 
         try:
             new_data = await asyncio.wait_for(
                 self.client.async_get_data(self.options),
                 timeout=self._fetch_timeout,
             )
-            if new_data is None:
-                raise UpdateFailed("Failed to connect to OBD device")
-            if len(new_data) == 0:
-                self.update_interval = timedelta(seconds=self._slow_poll_interval)
-                _LOGGER.debug(
-                    "Car is probably off, switching to slow polling: interval = %s",
-                    self.update_interval,
-                )
-            else:
-                self.update_interval = timedelta(seconds=self._fast_poll_interval)
-                _LOGGER.debug(
-                    "Car is on, polling: interval = %s",
-                    self.update_interval,
-                )
         except TimeoutError as err:
+            self._note_failure()
             raise UpdateFailed(
                 f"BLE fetch timed out after {self._fetch_timeout}s"
             ) from err
         except Exception as err:
+            self._note_failure()
             raise UpdateFailed(f"Unable to fetch data: {err}") from err
+
+        if new_data is None:
+            self._note_failure()
+            raise UpdateFailed("Failed to connect to OBD device")
+
+        self._failed_polls = 0
+        if len(new_data) == 0:
+            self._set_interval(self._slow_poll_interval, "Car is probably off")
         else:
-            if self.options.get("cache_values", False):
-                self._cache_data.update(new_data)
-                return self._cache_data
-            return new_data
+            self._set_interval(self._fast_poll_interval, "Car is on")
+
+        if self._cache_values:
+            self._cache_data.update(new_data)
+            return self._cache_data
+        return new_data
+
+    def _note_failure(self) -> None:
+        self._failed_polls += 1
+        if self._failed_polls >= FAILED_POLLS_BEFORE_SLOW:
+            self._set_interval(
+                self._slow_poll_interval,
+                f"{self._failed_polls} consecutive failed polls",
+            )
 
     @property
     def options(self):
@@ -106,3 +132,9 @@ class RangeRoverBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._fetch_timeout = float(
             options.get("fetch_timeout", DEFAULT_FETCH_TIMEOUT)
         )
+        # Options changed at runtime: leave any backoff and poll again soon
+        # with the new intervals instead of waiting out the old timer.
+        if getattr(self, "_listeners", None):
+            self._absent_checks = 0
+            self._failed_polls = 0
+            self.update_interval = timedelta(seconds=self._fast_poll_interval)
