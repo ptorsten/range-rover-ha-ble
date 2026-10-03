@@ -149,24 +149,19 @@ COMMANDS: dict[str, dict[str, Any]] = {
 }
 
 
-def _parse_hex_payload(raw: str) -> bytes | None:
-    """Extract the hex data payload from an ELM327 response.
+def _parse_frames(raw: str) -> list[bytes]:
+    """Split an ELM327 response (ATH1, ATS0) into per-frame payloads.
 
-    Handles multi-line responses and strips header bytes.
-    Returns None on parse failure.
+    Each frame looks like "<3-hex-digit CAN ID><PCI byte><data>", e.g.
+    "7EC05624910258C". The 3-digit ID makes the frame odd-length, so
+    bytes.fromhex() on the whole string fails; strip the ID per frame and
+    drop the ISO-TP PCI byte. Returns [] for ELM noise or unparseable input.
     """
     clean = raw.replace("\r", " ").replace("\n", " ").upper()
-    # Remove common ELM noise
     for noise in ("SEARCHING...", "NO DATA", "NODATA", "?", "ERROR", "CAN ERROR", "BUS ERROR"):
         if noise in clean:
-            return None
+            return []
 
-    # With ATH1 + ATS0 each frame is "<3-hex-digit CAN ID><PCI byte><data>",
-    # e.g. "7EC05624910258C". The 3-digit ID makes the frame odd-length, so
-    # bytes.fromhex() on the whole string fails; strip the ID per frame.
-    # A broadcast (7DF) can return one frame per ECU; some may be UDS
-    # negative responses (7F xx NRC) while another carries real data, so
-    # prefer the first non-7F frame.
     payloads: list[bytes] = []
     for frame in clean.split():
         if len(frame) % 2 == 1 and len(frame) >= 5:
@@ -182,19 +177,27 @@ def _parse_hex_payload(raw: str) -> bytes | None:
         if not data:
             continue
         pci = data[0]
-        if pci >> 4 == 0:             # ISO-TP single frame: low nibble = length
+        if pci >> 4 == 0:             # single frame: low nibble = length
             data = data[1 : 1 + (pci & 0x0F)]
-        elif pci >> 4 == 1 and len(data) > 2:  # first frame of a multi-frame reply
+        elif pci >> 4 == 1 and len(data) > 2:  # first frame of multi-frame
             data = data[2:]
+        elif pci >> 4 == 2:           # consecutive frame
+            data = data[1:]
         if data:
             payloads.append(data)
+    return payloads
 
-    if not payloads:
-        return None
-    for data in payloads:
+
+def _parse_hex_payload(raw: str) -> bytes | None:
+    """Return the first positive-response payload, or None.
+
+    A broadcast (7DF) can return one frame per ECU; some may be UDS negative
+    responses (7F xx NRC) while another carries real data, so prefer the
+    first non-7F frame. Returns None when every ECU rejected the request.
+    """
+    for data in _parse_frames(raw):
         if data[0] != 0x7F:
             return data
-    # Every ECU rejected the request (e.g. 7F 22 31 requestOutOfRange).
     return None
 
 
@@ -597,23 +600,23 @@ class RangeRoverBleClient:
 
 
 def _classify_nrc(raw: str) -> str | None:
-    """If the response contains a UDS Negative Response (7F), decode the NRC."""
-    try:
-        data = bytes.fromhex(raw.replace(" ", ""))
-    except ValueError:
+    """Name the UDS negative response code if *every* ECU answered 7F."""
+    frames = _parse_frames(raw)
+    if not frames or any(data[0] != 0x7F for data in frames):
         return None
     nrc_names = {
+        0x10: "generalReject",
         0x11: "serviceNotSupported",
         0x12: "subFunctionNotSupported",
         0x13: "incorrectMessageLength",
         0x22: "conditionsNotCorrect",
         0x31: "requestOutOfRange",
         0x33: "securityAccessDenied",
+        0x78: "requestCorrectlyReceivedResponsePending",
         0x7E: "subFunctionNotSupportedInActiveSession",
         0x7F: "serviceNotSupportedInActiveSession",
     }
-    for i in range(len(data) - 2):
-        if data[i] == 0x7F:
-            nrc = data[i + 2]
-            return nrc_names.get(nrc, f"0x{nrc:02X}")
+    for data in frames:
+        if len(data) >= 3:
+            return nrc_names.get(data[2], f"0x{data[2]:02X}")
     return None

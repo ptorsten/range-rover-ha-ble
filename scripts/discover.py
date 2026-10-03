@@ -17,6 +17,8 @@ Usage:
     python3 scripts/discover.py <addr> --sweep --label unplugged --out unplugged.json
     python3 scripts/discover.py --compare charging.json unplugged.json
     python3 scripts/discover.py --test                # offline self-test, no car needed
+    python3 scripts/discover.py <addr> --raw          # ask the adapter how it sleeps (STI, STSLCS, ATPPS…)
+    python3 scripts/discover.py <addr> --raw ATRV STSLU   # send your own commands
     # Narrow/widen: --ecu 7E5 --range 0000-FFFF   (full sweep of one ECU, ~hours)
 
 Note on addresses: on Linux/Windows the address is the adapter's Bluetooth
@@ -1029,6 +1031,40 @@ async def selftest() -> int:
     print(f"  python3 scripts/discover.py --compare {a} {b}")
     return 0
 
+# Commands worth asking an adapter to learn how it sleeps. "ST" commands are
+# answered only by STN-based adapters (OBDLink, some Vgate models); a plain
+# ELM327 clone replies "?" to them.
+SLEEP_PROBE_COMMANDS = [
+    ("ATI", "ELM327 identity"),
+    ("AT@1", "device description"),
+    ("ATRV", "battery voltage seen by adapter"),
+    ("STI", "STN firmware (STN chips only)"),
+    ("STDI", "STN device id"),
+    ("STSLCS", "STN sleep/wake config summary"),
+    ("ATPPS", "ELM327 programmable parameters (PP 0E/0F = low power)"),
+]
+
+
+async def raw(address: str, commands: list[str]):
+    """Send arbitrary AT/ST/OBD commands and print the replies."""
+    print(f"\nConnecting to {address}...\n")
+    elm = ELM327BLE()
+    async with open_client(address) as client:
+        print(f"Connected: {client.is_connected}\n")
+        uuids = await _setup_adapter(client, elm)
+        if not uuids:
+            return
+        write_uuid, notify_uuid = uuids
+        print("\n--- Raw commands ---\n")
+        for cmd in commands:
+            resp = await elm.send(client, write_uuid, cmd, 3.0)
+            print(f"  > {cmd}")
+            for line in (resp or "<empty>").split("\r"):
+                line = line.strip()
+                if line and line != cmd:
+                    print(f"    {line}")
+        await client.stop_notify(notify_uuid)
+
 
 async def main():
     import argparse
@@ -1041,6 +1077,8 @@ async def main():
     ap.add_argument("--out", default="sweep.json", help="where to save sweep results (JSON)")
     ap.add_argument("--label", default="", help="free-text label stored in the sweep file, e.g. 'charging'")
     ap.add_argument("--compare", nargs=2, metavar=("A.json", "B.json"), help="diff two sweep files and exit")
+    ap.add_argument("--raw", nargs="*", metavar="CMD",
+                    help="send raw AT/ST/OBD commands and print replies; with no CMD, run the adapter sleep probe set")
     ap.add_argument("--test", action="store_true", help="self-test: run everything against a simulated adapter/car, no BLE")
     args = ap.parse_args()
 
@@ -1071,7 +1109,14 @@ async def main():
                 return
         address = candidates[choice].address
 
-    if args.sweep:
+    if args.raw is not None:
+        cmds = args.raw or [c for c, _ in SLEEP_PROBE_COMMANDS]
+        if not args.raw:
+            print("Adapter sleep probe:")
+            for c, why in SLEEP_PROBE_COMMANDS:
+                print(f"  {c:8s} {why}")
+        await raw(address, cmds)
+    elif args.sweep:
         ecus = [e.strip().upper() for x in (args.ecu or DEFAULT_SWEEP_ECUS) for e in x.split(",")]
         ranges = [r.strip().upper() for x in (args.range or DEFAULT_SWEEP_RANGES) for r in x.split(",")]
         await sweep(address, ecus, ranges, args.out, args.label)
