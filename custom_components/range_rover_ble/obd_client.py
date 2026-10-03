@@ -44,6 +44,18 @@ ELM_INIT_COMMANDS = [
 # This wakes sleeping ECUs and keeps them awake for the duration of the poll.
 WAKEUP_HEADERS = ["7E4", "7E5"]
 
+# Commands that reveal how an adapter sleeps. "ST" commands are answered only
+# by STN-based adapters (OBDLink, some Vgate); a plain ELM327 clone says "?".
+SLEEP_PROBE_COMMANDS: list[tuple[str, str]] = [
+    ("ATI", "ELM327 identity"),
+    ("AT@1", "device description"),
+    ("ATRV", "12V as seen by the adapter"),
+    ("STI", "STN firmware (STN chips only)"),
+    ("STDI", "STN device id"),
+    ("STSLCS", "STN sleep/wake config summary"),
+    ("ATPPS", "ELM327 programmable parameters (PP 0E/0F = low power)"),
+]
+
 # Known BLE OBD adapter GATT layouts. If the configured UUIDs are not present
 # on the connected device we fall back to the first of these that is.
 UUID_CANDIDATES: list[dict[str, str]] = [
@@ -559,6 +571,39 @@ class RangeRoverBleClient:
             return result
 
         return result
+
+    async def async_send_raw(
+        self, commands: list[str], options: dict | None = None
+    ) -> list[tuple[str, str]]:
+        """Send arbitrary AT/ST/OBD commands and return (command, reply) pairs.
+
+        Does NOT run the ELM init sequence (no ATZ), so adapter settings you
+        are reading or changing are not reset first. Echo is turned off.
+        """
+        options = options or {}
+        read_uuid = options.get("characteristic_uuid_read", self._read_uuid)
+        write_uuid = options.get("characteristic_uuid_write", self._write_uuid)
+        out: list[tuple[str, str]] = []
+
+        client = await self._connect()
+        try:
+            read_uuid, write_uuid = _resolve_uuids(client, read_uuid, write_uuid)
+            self._write_uuid = write_uuid
+            await client.start_notify(read_uuid, self._notification_handler)
+            await self._send_command(client, b"ATE0\r", timeout=2.0)
+            for cmd in commands:
+                cmd = cmd.strip()
+                if not cmd:
+                    continue
+                resp = await self._send_command(client, f"{cmd}\r".encode(), timeout=4.0)
+                resp = resp.replace("\r", "\n").strip() or "<no reply / timeout>"
+                # drop echoed command line if echo was still on
+                lines = [l for l in resp.splitlines() if l.strip() and l.strip() != cmd]
+                out.append((cmd, "\n".join(lines) or "<empty>"))
+            await client.stop_notify(read_uuid)
+        finally:
+            await client.disconnect()
+        return out
 
     async def async_run_discovery(self, options: dict | None = None) -> dict[str, Any]:
         """Run a full PID discovery scan across all ECUs.

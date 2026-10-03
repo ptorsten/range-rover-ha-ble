@@ -10,8 +10,11 @@ from bleak_retry_connector import get_device
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
+import voluptuous as vol
+
+from homeassistant.components.persistent_notification import async_create
 from homeassistant.const import CONF_ADDRESS
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.typing import ConfigType
 
@@ -29,8 +32,43 @@ from .obd_client import RangeRoverBleClient
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
+SERVICE_SEND_RAW = "send_raw_commands"
+SERVICE_SEND_RAW_SCHEMA = vol.Schema(
+    {
+        vol.Required("commands"): vol.All(vol.Coerce(list), [str]),
+        vol.Optional("notify", default=True): bool,
+    }
+)
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType):
     """Set up this integration using YAML is not supported."""
+
+    async def _handle_send_raw(call: ServiceCall) -> ServiceResponse:
+        coordinators = list(hass.data.get(DOMAIN, {}).values())
+        if not coordinators:
+            raise vol.Invalid("No Range Rover BLE adapter is configured")
+        coordinator = coordinators[0]
+        replies = await coordinator.client.async_send_raw(
+            call.data["commands"], coordinator.options
+        )
+        if call.data.get("notify", True):
+            body = "\n".join(f"**`{c}`**\n```\n{r}\n```" for c, r in replies)
+            async_create(
+                hass, body or "no replies",
+                title="Range Rover BLE raw commands",
+                notification_id="range_rover_ble_raw",
+            )
+        return {"replies": [{"command": c, "reply": r} for c, r in replies]}
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_RAW):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SEND_RAW,
+            _handle_send_raw,
+            schema=SERVICE_SEND_RAW_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
     return True
 
 

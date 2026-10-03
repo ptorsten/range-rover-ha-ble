@@ -1,0 +1,20 @@
+send_raw_commands:
+  name: Send raw adapter commands
+  description: >
+    Send AT/ST/OBD commands straight to the BLE OBD adapter and return the replies.
+    Does not reset the adapter first (no ATZ). Use it to read or change adapter
+    settings such as sleep behaviour (e.g. STSLCS, STSLU off, off).
+  fields:
+    commands:
+      name: Commands
+      description: One command per list item, sent in order.
+      required: true
+      example: '["STI", "STSLCS"]'
+      selector:
+        object:
+    notify:
+      name: Post notification
+      description: Also post the replies as a persistent notification.
+      default: true
+      selector:
+        boolean:
