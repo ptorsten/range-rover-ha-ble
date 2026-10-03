@@ -55,6 +55,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         service_uuid=opts.get("service_uuid", DEFAULT_SERVICE_UUID),
         read_uuid=opts.get("characteristic_uuid_read", DEFAULT_CHARACTERISTIC_UUID_READ),
         write_uuid=opts.get("characteristic_uuid_write", DEFAULT_CHARACTERISTIC_UUID_WRITE),
+        device_lookup=lambda: bluetooth.async_ble_device_from_address(
+            hass, address.upper(), True
+        ),
     )
 
     coordinator = RangeRoverBleDataUpdateCoordinator(

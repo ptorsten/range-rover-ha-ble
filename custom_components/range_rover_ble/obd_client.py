@@ -19,10 +19,12 @@ platform — DID numbers may differ and MUST be validated on the actual vehicle.
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from bleak import BleakClient
 from bleak.backends.device import BLEDevice
+from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -388,14 +390,36 @@ class RangeRoverBleClient:
         service_uuid: str | None = None,
         read_uuid: str | None = None,
         write_uuid: str | None = None,
+        device_lookup: Callable[[], BLEDevice | None] | None = None,
     ) -> None:
-        """Initialize with a BLE device reference."""
+        """Initialize with a BLE device reference.
+
+        ``device_lookup`` is called before each connection to fetch a fresh
+        BLEDevice from Home Assistant's Bluetooth manager. The device object
+        carries the routing details for whichever adapter or ESPHome proxy
+        currently hears the dongle, so a stale one can point at a proxy that
+        no longer sees it.
+        """
         self._ble_device = ble_device
+        self._device_lookup = device_lookup
         self._service_uuid = service_uuid
         self._read_uuid = read_uuid
         self._write_uuid = write_uuid
         self._response_buffer = bytearray()
         self._response_event = asyncio.Event()
+
+    async def _connect(self) -> BleakClient:
+        """Connect with bleak-retry-connector (handles proxies, retries, slots)."""
+        if self._device_lookup is not None:
+            fresh = self._device_lookup()
+            if fresh is not None:
+                self._ble_device = fresh
+        return await establish_connection(
+            BleakClientWithServiceCache,
+            self._ble_device,
+            self._ble_device.name or self._ble_device.address,
+            max_attempts=3,
+        )
 
     def _notification_handler(self, _sender, data: bytearray) -> None:
         """Handle incoming BLE notifications (ELM327 responses)."""
@@ -435,7 +459,8 @@ class RangeRoverBleClient:
         last_header = None
 
         try:
-            async with BleakClient(self._ble_device) as client:
+            client = await self._connect()
+            try:
                 read_uuid, write_uuid = _resolve_uuids(client, read_uuid, write_uuid)
                 self._write_uuid = write_uuid
                 await client.start_notify(read_uuid, self._notification_handler)
@@ -526,6 +551,8 @@ class RangeRoverBleClient:
                             last_header = saved_header
 
                 await client.stop_notify(read_uuid)
+            finally:
+                await client.disconnect()
 
         except Exception as err:
             _LOGGER.error("BLE OBD communication error: %s", err)
@@ -588,7 +615,8 @@ class RangeRoverBleClient:
         errors: list[dict] = []
 
         try:
-            async with BleakClient(self._ble_device) as client:
+            client = await self._connect()
+            try:
                 read_uuid, write_uuid = _resolve_uuids(client, read_uuid, write_uuid)
                 self._write_uuid = write_uuid
                 await client.start_notify(read_uuid, self._notification_handler)
@@ -656,6 +684,8 @@ class RangeRoverBleClient:
                             last_header = saved
 
                 await client.stop_notify(read_uuid)
+            finally:
+                await client.disconnect()
 
         except Exception as err:
             _LOGGER.error("Discovery scan error: %s", err)
